@@ -146,6 +146,11 @@ const MerchantProfilePage = lazyRetry(() => import("./pages/merchant/MerchantPro
 const DashboardDispatcher = lazyRetry(() => import("./pages/common/DashboardDispatcher"));
 const NotFound = lazyRetry(() => import("./pages/public/NotFound"));
 
+const LinkHubRedirect = () => {
+  window.location.replace("/link-hub/index.html");
+  return null;
+};
+
 const App = () => {
   const isOnline = useOnlineStatus();
 
@@ -289,6 +294,9 @@ const App = () => {
               <Route path="/merchant/users" element={<AdminUsersPage />} />
             </Route>
           </Route>
+
+          {/* Static link hub page (frontend/public/link-hub/index.html) */}
+          <Route path="/link-hub" element={<LinkHubRedirect />} />
 
           {/* Catch All */}
           <Route path="*" element={<NotFound />} />
