@@ -330,9 +330,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -347,29 +351,18 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources.sh\"\n";
 			showEnvVarsInLog = 0;
-		};
-		C162B3401E01B5464F499306 /* Update Version From pubspec.yaml */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Update Version From pubspec.yaml";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -e\nPUBSPEC=\"$SRCROOT/../pubspec.yaml\"\nVERSION_LINE=$(grep '^version:' \"$PUBSPEC\" | head -1 | sed 's/version:[[:space:]]*//' | tr -d '\\r\\n')\nBUILD_NAME=\"${VERSION_LINE%%+*}\"\nBUILD_NUMBER=\"${VERSION_LINE##*+}\"\nPLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n# Runs after Copy Bundle Resources, patching the already-copied Info.plist\n# directly — CURRENT_PROJECT_VERSION/MARKETING_VERSION substitution from\n# Generated.xcconfig happens when Xcode resolves build settings at the\n# START of the build, before any script phase runs, so a stale\n# Generated.xcconfig (e.g. archiving without a prior `flutter build`/`pub\n# get`) can't be fixed by a script phase reading build settings. Patching\n# the file on disk afterwards sidesteps that entirely.\nif [ -f \"$PLIST\" ] && [ -n \"$BUILD_NAME\" ] && [ -n \"$BUILD_NUMBER\" ]; then\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $BUILD_NAME\" \"$PLIST\"\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUMBER\" \"$PLIST\"\nfi\n";
 		};
 		9740EEB61CF901F6004384FC /* Run Script */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -407,6 +400,21 @@
 			shellPath = /bin/sh;
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
+		};
+		C162B3401E01B5464F499306 /* Update Version From pubspec.yaml */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Update Version From pubspec.yaml";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nPUBSPEC=\"$SRCROOT/../pubspec.yaml\"\nVERSION_LINE=$(grep '^version:' \"$PUBSPEC\" | head -1 | sed 's/version:[[:space:]]*//' | tr -d '\\r\\n')\nBUILD_NAME=\"${VERSION_LINE%%+*}\"\nBUILD_NUMBER=\"${VERSION_LINE##*+}\"\nPLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n# Runs after Copy Bundle Resources, patching the already-copied Info.plist\n# directly — CURRENT_PROJECT_VERSION/MARKETING_VERSION substitution from\n# Generated.xcconfig happens when Xcode resolves build settings at the\n# START of the build, before any script phase runs, so a stale\n# Generated.xcconfig (e.g. archiving without a prior `flutter build`/`pub\n# get`) can't be fixed by a script phase reading build settings. Patching\n# the file on disk afterwards sidesteps that entirely.\nif [ -f \"$PLIST\" ] && [ -n \"$BUILD_NAME\" ] && [ -n \"$BUILD_NUMBER\" ]; then\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $BUILD_NAME\" \"$PLIST\"\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUMBER\" \"$PLIST\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -519,6 +527,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = Q4PSKK5982;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
