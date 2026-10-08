@@ -243,7 +243,7 @@ const Contact = () => {
 
       <div className="container mx-auto px-4 py-16 -mt-20 relative z-20">
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Contact Info Cards */}
+          {/* Contact Infddddo Cards */}
           <motion.div 
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
