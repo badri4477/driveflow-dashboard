@@ -253,7 +253,7 @@ const Contact = () => {
             {[
               {
                 icon: MapPin,
-                title: "Visit Us",
+                title: "Our Location",
                 details: [contactDetails.address],
                 color: "text-blue-500",
                 bg: "bg-blue-500/10",
