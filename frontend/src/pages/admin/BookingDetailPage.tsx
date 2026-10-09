@@ -796,6 +796,22 @@ const BookingDetailPage: React.FC = () => {
                        <span className="text-muted-foreground">Base Service Amount:</span>
                        <span className="font-bold">₹{booking.totalAmount}</span>
                     </div>
+                    {booking.discountAmount > 0 && (
+                      <div className="flex justify-between">
+                         <span className="text-muted-foreground">
+                            Discount{booking.coupon?.code ? ` (${booking.coupon.code})` : ''}:
+                         </span>
+                         <span className="font-bold text-green-600">−₹{booking.discountAmount}</span>
+                      </div>
+                    )}
+                    {booking.discountAmount > 0 && (
+                      <div className="flex justify-between">
+                         <span className="text-muted-foreground">Price after Discount:</span>
+                         <span className="font-bold">
+                            ₹{Math.round((booking.totalAmount - booking.discountAmount) * 100) / 100}
+                         </span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                        <span className="text-muted-foreground">Tax (GST 18%):</span>
                        <span className="font-bold">₹{booking.gstAmount}</span>
@@ -826,42 +842,6 @@ const BookingDetailPage: React.FC = () => {
                    </span>
                 </div>
 
-                {booking.discountAmount > 0 && (
-                  <div className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl space-y-3">
-                    <h4 className="text-[10px] font-bold text-green-800 uppercase tracking-widest flex items-center gap-2">
-                      <div className="w-1 h-3 bg-green-500 rounded-full" />
-                      Calculation Breakdown
-                    </h4>
-                    
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm text-green-700">
-                        <span className="opacity-80">Total Amount</span>
-                        <span className="font-medium">₹{(booking.finalAmount || booking.totalAmount) + (booking.discountAmount || 0)}</span>
-                      </div>
-                      
-                      <div className="flex justify-between text-sm text-green-700">
-                        <span className="opacity-80">Applied Coupon ({booking.coupon?.code || 'DISCOUNT'})</span>
-                        <span className="font-medium text-green-600">{booking.coupon?.discountPercentage || Math.round((booking.discountAmount / ((booking.finalAmount || booking.totalAmount) + (booking.discountAmount || 0))) * 100)}% Off</span>
-                      </div>
-                      
-                      <div className="pt-2 border-t border-green-200/50">
-                        <div className="flex justify-between text-sm text-green-800">
-                          <span className="opacity-80">Discount Calculation</span>
-                          <span className="font-semibold">
-                            {(booking.finalAmount || booking.totalAmount) + (booking.discountAmount || 0)} × {((booking.coupon?.discountPercentage || (booking.discountAmount / ((booking.finalAmount || booking.totalAmount) + (booking.discountAmount || 0)) * 100)) / 100).toFixed(2)} = ₹{booking.discountAmount}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-between text-sm text-green-800">
-                        <span className="opacity-80">Final Payable</span>
-                        <span className="font-bold">
-                          {(booking.finalAmount || booking.totalAmount) + (booking.discountAmount || 0)} − {booking.discountAmount} = ₹{booking.finalAmount || booking.totalAmount}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
                 {booking.paymentStatus === 'paid' && !isGeneralService && (
                   <button
                     onClick={handleDownloadInvoice}

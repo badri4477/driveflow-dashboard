@@ -603,6 +603,7 @@ export const getBookingInvoice = async (req, res) => {
       console.error('Error fetching reference data for invoice:', err);
     }
 
+    const serviceRows = [];
     (booking.services || []).forEach((service) => {
       let desc = formatInvoiceServiceDescription(service);
       let price = Number(service.price) || 0;
@@ -694,9 +695,48 @@ export const getBookingInvoice = async (req, res) => {
         }
       }
 
-      drawRow(desc, qty, price, price * qty);
-      subtotal += (price * qty);
+      serviceRows.push({ desc, qty, price });
     });
+
+    // Line prices above are re-resolved from *current* vehicle pricing, which
+    // can drift from what was charged. Reconcile them to the services amount
+    // stored on the booking (totalAmount minus parts, labour, merchant GST and
+    // pickup) so the invoice matches the dashboard and the amount paid.
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const storedTotal = Number(booking.totalAmount);
+    if (Number.isFinite(storedTotal) && storedTotal > 0 && serviceRows.length > 0) {
+      const partsTotal = (booking.parts || []).reduce(
+        (acc, part) => acc + (Number(part.price) || 0) * (Number(part.quantity) || 1),
+        0
+      );
+      const storedServices = round2(
+        storedTotal -
+          partsTotal -
+          (Number(booking.billing?.labourCost) || 0) -
+          (Number(booking.billing?.gst) || 0) -
+          (isGeneralService ? Number(booking.pickupDropPrice) || 0 : 0)
+      );
+      const resolvedServices = round2(serviceRows.reduce((acc, r) => acc + r.price * r.qty, 0));
+      if (storedServices > 0 && storedServices !== resolvedServices) {
+        let remaining = storedServices;
+        serviceRows.forEach((row, i) => {
+          const isLast = i === serviceRows.length - 1;
+          const lineAmount = isLast
+            ? remaining
+            : resolvedServices > 0
+              ? round2((row.price * row.qty * storedServices) / resolvedServices)
+              : round2(storedServices / serviceRows.length);
+          remaining = round2(remaining - lineAmount);
+          row.price = round2(lineAmount / row.qty);
+        });
+      }
+    }
+
+    serviceRows.forEach(({ desc, qty, price }) => {
+      drawRow(desc, qty, price, round2(price * qty));
+      subtotal += price * qty;
+    });
+    subtotal = round2(subtotal);
 
     if (isGeneralService && booking.pickupDropPrice && booking.pickupDropPrice > 0) {
       drawRow('Pickup & Drop Charges', 1, booking.pickupDropPrice, booking.pickupDropPrice);
@@ -741,32 +781,31 @@ export const getBookingInvoice = async (req, res) => {
 
     const discount = Number(booking.discountAmount) || 0;
     const merchantGst = Number(booking.billing?.gst) || 0;
-    const checkoutGst = isGeneralService ? 0 : Number(booking.gstAmount) || 0;
-    let tax = merchantGst > 0 ? merchantGst : checkoutGst;
-    let total = Number(booking.finalAmount);
-    if (!Number.isFinite(total)) {
-      total = Number(booking.totalAmount);
-    }
-    if (!isGeneralService && tax <= 0 && discount >= 0 && subtotal > 0) {
-      const computed = calculateOrderTotals(subtotal, discount, true);
-      if (tax <= 0) tax = computed.tax;
-      if (!Number.isFinite(total) || total <= 0) {
-        total = computed.total;
-      }
-    } else if (isGeneralService && merchantGst <= 0) {
+    // Derive tax and total from the subtotal shown on this invoice so the
+    // rows always add up. Stored gstAmount/finalAmount can be stale when
+    // line prices were re-resolved from current vehicle pricing above.
+    let tax;
+    if (merchantGst > 0) {
+      tax = merchantGst;
+    } else if (isGeneralService) {
       tax = 0;
-      if (!Number.isFinite(total) || total <= 0) {
-        total = Math.round((subtotal - discount) * 100) / 100;
-      }
+    } else {
+      tax = calculateOrderTotals(subtotal, discount, true).tax;
     }
-    if (!Number.isFinite(total) || total <= 0) {
-      total = Math.round((subtotal - discount + tax) * 100) / 100;
-    }
+    const total = Math.round((Math.max(0, subtotal - discount) + tax) * 100) / 100;
 
-    moneyRowTotals('Subtotal', formatInr(subtotal), false);
+    // With a discount: Amount → Discount → Subtotal (after discount) → Tax.
     if (discount > 0) {
       const pct = subtotal > 0 ? Math.round((discount / subtotal) * 100) : 0;
+      moneyRowTotals('Amount', formatInr(subtotal), false);
       moneyRowTotals(`Discount (${pct}%)`, `- ${formatInr(discount)}`, false);
+      moneyRowTotals(
+        'Subtotal',
+        formatInr(Math.round(Math.max(0, subtotal - discount) * 100) / 100),
+        false
+      );
+    } else {
+      moneyRowTotals('Subtotal', formatInr(subtotal), false);
     }
     if (tax > 0) {
       const taxLabel =

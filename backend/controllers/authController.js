@@ -483,7 +483,11 @@ export const prepareLogin = async (req, res) => {
     // password, for stronger protection on the most privileged role —
     // same mechanism as the phone-only login flow below, just entered
     // via email+password first instead of phone+OTP alone.
-    if (user.role === 'admin') {
+    // Local dev only: SKIP_ADMIN_OTP=true in backend/.env bypasses this step.
+    // Never honoured when NODE_ENV=production.
+    const skipAdminOtp =
+      process.env.SKIP_ADMIN_OTP === 'true' && process.env.NODE_ENV !== 'production';
+    if (user.role === 'admin' && !skipAdminOtp) {
       const mobile = resolveUserMobile(user);
       if (!mobile) {
         return res.status(400).json({

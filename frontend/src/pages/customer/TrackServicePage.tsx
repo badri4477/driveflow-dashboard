@@ -1362,42 +1362,6 @@ const TrackServicePage: React.FC = () => {
                               <span>₹{gst}</span>
                             </div>
                           )}
-                          {discount > 0 && (
-                            <div className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl space-y-3">
-                              <h4 className="text-[10px] font-bold text-green-800 uppercase tracking-widest flex items-center gap-2">
-                                <div className="w-1 h-3 bg-green-500 rounded-full" />
-                                Calculation Breakdown
-                              </h4>
-                              
-                              <div className="space-y-2">
-                                <div className="flex justify-between text-sm text-green-700">
-                                  <span className="opacity-80">Total Amount</span>
-                                  <span className="font-medium">₹{order.totalAmount || (order.finalAmount + discount)}</span>
-                                </div>
-                                
-                                <div className="flex justify-between text-sm text-green-700">
-                                  <span className="opacity-80">Applied Coupon ({order.coupon?.code || 'DISCOUNT'})</span>
-                                  <span className="font-medium text-green-600">{order.coupon?.discountPercentage || Math.round((discount / (order.totalAmount || (order.finalAmount + discount))) * 100)}% Off</span>
-                                </div>
-                                
-                                <div className="pt-2 border-t border-green-200/50">
-                                  <div className="flex justify-between text-sm text-green-800">
-                                    <span className="opacity-80">Discount Calculation</span>
-                                    <span className="font-semibold">
-                                      {order.totalAmount || (order.finalAmount + discount)} × {((order.coupon?.discountPercentage || (discount / (order.totalAmount || (order.finalAmount + discount)) * 100)) / 100).toFixed(2)} = ₹{discount}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <div className="flex justify-between text-sm text-green-800">
-                                  <span className="opacity-80">Final Payable</span>
-                                  <span className="font-bold">
-                                    {order.totalAmount || (order.finalAmount + discount)} − {discount} = ₹{order.finalAmount}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          )}
                           <div className="flex justify-between font-bold text-foreground text-lg pt-2 border-t border-border mt-2">
                             <span>Total Billed Amount</span>
                             <div className="text-right">
