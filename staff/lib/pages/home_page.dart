@@ -19,6 +19,9 @@ import '../widgets/appearance_settings.dart';
 import '../widgets/staff/staff_bottom_nav.dart';
 import '../widgets/staff/staff_drawer.dart';
 import '../utils/post_login_permissions.dart';
+import '../widgets/states/status_feedback.dart';
+import '../widgets/states/skeleton.dart';
+import '../widgets/states/state_view.dart';
 
 class StaffHomePage extends StatefulWidget {
   const StaffHomePage({super.key});
@@ -349,9 +352,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                                     final message = e is ApiException
                                         ? e.message
                                         : 'Failed to fetch current location';
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(message)),
-                                    );
+                                    StatusFeedback.auto(message);
                                   } finally {
                                     if (context.mounted) {
                                       setModalState(
@@ -435,17 +436,13 @@ class _StaffHomePageState extends State<StaffHomePage> {
       await _authService.updateProfile(payload);
       await _loadData();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Profile updated')));
+      StatusFeedback.auto('Profile updated');
     } catch (e) {
       if (!mounted) return;
       final message = e is ApiException
           ? e.message
           : 'Failed to update profile';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      StatusFeedback.auto(message);
     }
   }
 
@@ -862,71 +859,83 @@ class _StaffHomePageState extends State<StaffHomePage> {
           color: isDark ? AppColors.borderColor : const Color(0xFFE5E7EB),
         ),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        leading: CircleAvatar(
-          radius: 22,
-          backgroundColor: isDark
-              ? AppColors.backgroundSurface
-              : const Color(0xFFE0EAFF),
-          child: Icon(
-            Icons.directions_car_filled_rounded,
-            color: isDark ? const Color(0xFF1D4ED8) : const Color(0xFF2563EB),
+      // Transparent Material so the tap ripple shows over the card colour.
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
           ),
-        ),
-        title: Text(
-          booking.vehicleName ?? 'Booking',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.white : Colors.black,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 8,
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 2),
-            Text(
-              'Order #${booking.orderNumber ?? booking.id}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: isDark ? Colors.grey[400] : const Color(0xFF374151),
-                fontWeight: FontWeight.w600,
-              ),
+          leading: CircleAvatar(
+            radius: 22,
+            backgroundColor: isDark
+                ? AppColors.backgroundSurface
+                : const Color(0xFFE0EAFF),
+            child: Icon(
+              Icons.directions_car_filled_rounded,
+              color: isDark ? const Color(0xFF1D4ED8) : const Color(0xFF2563EB),
             ),
-            if (dateLabel.isNotEmpty) ...[
-              const SizedBox(height: 4),
+          ),
+          title: Text(
+            booking.vehicleName ?? 'Booking',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white : Colors.black,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 2),
               Text(
-                dateLabel,
+                'Order #${booking.orderNumber ?? booking.id}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
+                  color: isDark ? Colors.grey[400] : const Color(0xFF374151),
+                  fontWeight: FontWeight.w600,
                 ),
               ),
+              if (dateLabel.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  dateLabel,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
+                  ),
+                ),
+              ],
             ],
-          ],
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E293B) : const Color(0xFFE0EAFF),
-            borderRadius: BorderRadius.circular(999),
           ),
-          child: Text(
-            statusLabel,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: isDark ? const Color(0xFF1D4ED8) : const Color(0xFF1E40AF),
+          trailing: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E293B) : const Color(0xFFE0EAFF),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              statusLabel,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: isDark
+                    ? const Color(0xFF1D4ED8)
+                    : const Color(0xFF1E40AF),
+              ),
             ),
           ),
+          onTap: () {
+            final id = booking.id.trim();
+            if (id.isEmpty) return;
+            Navigator.of(context).pushNamed('/order', arguments: id);
+          },
         ),
-        onTap: () {
-          final id = booking.id.trim();
-          if (id.isEmpty) return;
-          Navigator.of(context).pushNamed('/order', arguments: id);
-        },
       ),
     );
   }
@@ -1148,21 +1157,14 @@ class _StaffHomePageState extends State<StaffHomePage> {
                   if (_selectedTab == StaffBottomNavTab.profile)
                     const SizedBox.shrink()
                   else if (_isLoading && filteredOrders.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 48),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? AppColors.backgroundSecondary
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                          color: isDark
-                              ? AppColors.borderColor
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: const Center(child: CircularProgressIndicator()),
+                    const Column(
+                      children: [
+                        SkeletonCard(),
+                        SizedBox(height: 12),
+                        SkeletonCard(),
+                        SizedBox(height: 12),
+                        SkeletonCard(),
+                      ],
                     )
                   else if (_errorText != null)
                     Container(
@@ -1182,7 +1184,11 @@ class _StaffHomePageState extends State<StaffHomePage> {
                               : Colors.transparent,
                         ),
                       ),
-                      child: Center(child: Text(_errorText!)),
+                      child: StateView.error(
+                        message:
+                            '$_errorText. Check your connection and try again.',
+                        onRetry: _loadData,
+                      ),
                     )
                   else if (filteredOrders.isEmpty)
                     Container(
@@ -1233,9 +1239,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                   else
                     Column(
                       children: filteredOrders
-                          .map(
-                            (b) => _buildActiveJobCard(theme, isDark, b),
-                          )
+                          .map((b) => _buildActiveJobCard(theme, isDark, b))
                           .toList(),
                     ),
                 ],
@@ -1361,10 +1365,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
           width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: _logout,
-            icon: const Icon(
-              Icons.logout_rounded,
-              color: AppColors.error,
-            ),
+            icon: const Icon(Icons.logout_rounded, color: AppColors.error),
             label: const Text(
               'Logout',
               style: TextStyle(

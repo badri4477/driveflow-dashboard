@@ -486,7 +486,8 @@ export const prepareLogin = async (req, res) => {
     // Local dev only: SKIP_ADMIN_OTP=true in backend/.env bypasses this step.
     // Never honoured when NODE_ENV=production.
     const skipAdminOtp =
-      process.env.SKIP_ADMIN_OTP === 'true' && process.env.NODE_ENV !== 'production';
+      isTestingEnv() ||
+      (process.env.SKIP_ADMIN_OTP === 'true' && process.env.NODE_ENV !== 'production');
     if (user.role === 'admin' && !skipAdminOtp) {
       const mobile = resolveUserMobile(user);
       if (!mobile) {
@@ -534,6 +535,17 @@ export const sendLoginOtp = async (req, res) => {
 
     if (!pending) {
       return res.status(400).json({ message: 'Please sign in with email and password first' });
+    }
+
+    if (isTestingEnv()) {
+      const user = await User.findById(pending.userId);
+      if (user) {
+        await PendingLogin.deleteOne({ email: normalizedEmail });
+        return sendAuthResponse(req, res, user, {
+          skipOtp: true,
+          message: 'Logged in successfully (testing — OTP skipped).',
+        });
+      }
     }
 
     if (pending.expiresAt < new Date()) {
@@ -651,6 +663,14 @@ export const sendPhoneLoginOtp = async (req, res) => {
       return res.status(401).json({ message: 'Account pending approval. Please wait for admin approval.' });
     }
 
+    // In testing mode, skip OTP completely and log in immediately
+    if (isTestingEnv()) {
+      return sendAuthResponse(req, res, user, {
+        skipOtp: true,
+        message: 'Logged in successfully (testing — OTP skipped).',
+      });
+    }
+
     const pending = await PendingPhoneLogin.findOne({ mobile });
     if (
       pending?.lastOtpSentAt &&
@@ -710,19 +730,36 @@ export const verifyPhoneLoginOtp = async (req, res) => {
       return res.status(400).json({ message: 'Enter a valid 10-digit Indian mobile number' });
     }
 
-    const pending = await PendingPhoneLogin.findOne({ mobile });
-    if (!pending) {
-      return res.status(400).json({ message: 'Please request a new OTP.' });
+    let pending = await PendingPhoneLogin.findOne({ mobile });
+    let user;
+    if (pending) {
+      user = await User.findById(pending.userId);
+    }
+    if (!user && isTestingEnv()) {
+      user = await User.findOne({
+        $or: [{ phone }, { phone: mobile }, { phone: mobile.slice(2) }],
+      });
     }
 
-    if (pending.expiresAt < new Date()) {
-      await PendingPhoneLogin.deleteOne({ mobile });
-      return res.status(400).json({ message: 'OTP session expired. Please request a new OTP.' });
+    if (!user) {
+      return res.status(400).json({ message: 'User not found. Please request a new OTP.' });
+    }
+
+    if (!user.isApproved) {
+      if (pending) await PendingPhoneLogin.deleteOne({ mobile });
+      return res.status(401).json({ message: 'Account pending approval. Please wait for admin approval.' });
     }
 
     const isDummyTestLogin = mobile === DUMMY_TEST_MOBILE && otp === DUMMY_TEST_OTP;
 
     if (!isTestingEnv() && !isDummyTestLogin) {
+      if (!pending) {
+        return res.status(400).json({ message: 'Please request a new OTP.' });
+      }
+      if (pending.expiresAt < new Date()) {
+        await PendingPhoneLogin.deleteOne({ mobile });
+        return res.status(400).json({ message: 'OTP session expired. Please request a new OTP.' });
+      }
       pending.otpVerifyAttempts = (pending.otpVerifyAttempts || 0) + 1;
       if (pending.otpVerifyAttempts > MAX_OTP_VERIFY_ATTEMPTS) {
         await PendingPhoneLogin.deleteOne({ mobile });
@@ -730,17 +767,6 @@ export const verifyPhoneLoginOtp = async (req, res) => {
       }
       await pending.save();
       await msg91VerifySignupOtp(mobile, otp, pending);
-    }
-
-    const user = await User.findById(pending.userId);
-    if (!user) {
-      await PendingPhoneLogin.deleteOne({ mobile });
-      return res.status(400).json({ message: 'User not found' });
-    }
-
-    if (!user.isApproved) {
-      await PendingPhoneLogin.deleteOne({ mobile });
-      return res.status(401).json({ message: 'Account pending approval. Please wait for admin approval.' });
     }
 
     await clearLoginFailures(user);

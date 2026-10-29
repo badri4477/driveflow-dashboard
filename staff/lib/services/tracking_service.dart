@@ -252,7 +252,7 @@ class StaffTrackingService {
 
   Future<void> _handlePosition(dynamic pos) async {
     if (!_isTracking || pos == null) return;
-    
+
     // On web, sometimes the type system fails with LegacyJavaScriptObject
     // We try to safely extract properties
     Position? position;

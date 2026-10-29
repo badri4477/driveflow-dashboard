@@ -353,10 +353,7 @@ class _ParallaxStage extends StatelessWidget {
       opacity: (1.0 - abs * 0.35).clamp(0.0, 1.0),
       child: Transform.translate(
         offset: Offset(delta * -28, 0),
-        child: Transform.scale(
-          scale: 1.0 - abs * 0.06,
-          child: child,
-        ),
+        child: Transform.scale(scale: 1.0 - abs * 0.06, child: child),
       ),
     );
   }

@@ -11,6 +11,8 @@ import '../../core/app_colors.dart';
 import '../../state/theme_provider.dart';
 import '../../widgets/appearance_settings.dart';
 import 'package:provider/provider.dart';
+import '../../widgets/states/status_feedback.dart';
+import '../../widgets/states/skeleton.dart';
 
 class MerchantProfilePage extends StatefulWidget {
   const MerchantProfilePage({super.key});
@@ -232,9 +234,7 @@ class _MerchantProfilePageState extends State<MerchantProfilePage> {
                                     final message = e is ApiException
                                         ? e.message
                                         : 'Failed to fetch current location';
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(message)),
-                                    );
+                                    StatusFeedback.auto(message);
                                   } finally {
                                     if (context.mounted) {
                                       setModalState(
@@ -318,18 +318,14 @@ class _MerchantProfilePageState extends State<MerchantProfilePage> {
       await _authService.updateProfile(payload);
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Profile updated')));
+      StatusFeedback.auto('Profile updated');
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
       final message = e is ApiException
           ? e.message
           : 'Failed to update profile';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      StatusFeedback.auto(message);
     }
   }
 
@@ -375,7 +371,7 @@ class _MerchantProfilePageState extends State<MerchantProfilePage> {
           ),
         ],
         body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const SkeletonList(itemCount: 4, showLeading: false)
             : _user == null
             ? Center(
                 child: Text(
@@ -387,82 +383,91 @@ class _MerchantProfilePageState extends State<MerchantProfilePage> {
                 ),
               )
             : SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                // Extra bottom space so the floating bottom bar never covers
+                // the Logout button.
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  120 + MediaQuery.paddingOf(context).bottom,
+                ),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? AppColors.backgroundSecondary
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                          color: isDark
-                              ? AppColors.borderColor
-                              : const Color(0xFFE5E7EB),
-                        ),
-                      ),
+                    // Profile header
+                    _ProfileCard(
+                      isDark: isDark,
+                      padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
                       child: Column(
                         children: [
-                          CircleAvatar(
-                            radius: 48,
-                            backgroundColor: isDark
-                                ? AppColors.backgroundSurface
-                                : const Color(0xFFE0EAFF),
+                          Container(
+                            width: 84,
+                            height: 84,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _profileAccent(
+                                isDark,
+                              ).withValues(alpha: isDark ? 0.18 : 0.1),
+                            ),
                             child: Icon(
                               Icons.store_rounded,
-                              size: 48,
-                              color: isDark
-                                  ? AppColors.primaryBlue
-                                  : const Color(0xFF2563EB),
+                              size: 40,
+                              color: _profileAccent(isDark),
                             ),
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 14),
                           Text(
                             _user!.name,
+                            textAlign: TextAlign.center,
                             style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.3,
                               color: isDark
                                   ? Colors.white
                                   : const Color(0xFF111827),
                             ),
                           ),
-                          Text(
-                            _user!.role.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark
-                                  ? AppColors.primaryBlue
-                                  : const Color(0xFF2563EB),
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 1.1,
-                            ),
-                          ),
-                          if (_user!.categories.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Category: ${_user!.categories.join(', ')}',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: isDark
-                                    ? Colors.grey[400]
-                                    : Colors.grey[600],
+                          const SizedBox(height: 8),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _ProfileChip(
+                                label:
+                                    _user!.role[0].toUpperCase() +
+                                    _user!.role.substring(1),
+                                icon: Icons.verified_rounded,
+                                isDark: isDark,
+                                filled: true,
                               ),
-                            ),
-                          ],
-                          const SizedBox(height: 24),
-                          const Divider(height: 1),
-                          const SizedBox(height: 24),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Business details
+                    _ProfileCard(
+                      isDark: isDark,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _ProfileSectionTitle(
+                            icon: Icons.storefront_rounded,
+                            title: 'Business Details',
+                            isDark: isDark,
+                          ),
+                          const SizedBox(height: 8),
                           _ProfileDetailItem(
                             icon: Icons.email_outlined,
                             label: 'Email Address',
                             value: _user!.email,
                             isDark: isDark,
                           ),
-                          const SizedBox(height: 16),
+                          _ProfileDivider(isDark: isDark),
                           _ProfileDetailItem(
                             icon: Icons.phone_android_rounded,
                             label: 'Phone Number',
@@ -470,7 +475,7 @@ class _MerchantProfilePageState extends State<MerchantProfilePage> {
                             isDark: isDark,
                           ),
                           if (_user!.location?.address != null) ...[
-                            const SizedBox(height: 16),
+                            _ProfileDivider(isDark: isDark),
                             _ProfileDetailItem(
                               icon: Icons.location_on_outlined,
                               label: 'Address',
@@ -481,82 +486,387 @@ class _MerchantProfilePageState extends State<MerchantProfilePage> {
                         ],
                       ),
                     ),
+                    if (_user!.categories.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _ProfileCard(
+                        isDark: isDark,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _ProfileSectionTitle(
+                              icon: Icons.handyman_rounded,
+                              title: 'Services Offered',
+                              isDark: isDark,
+                            ),
+                            const SizedBox(height: 14),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                const gap = 10.0;
+                                final tileWidth =
+                                    (constraints.maxWidth - gap) / 2;
+                                return Wrap(
+                                  spacing: gap,
+                                  runSpacing: gap,
+                                  children: [
+                                    for (final c in _user!.categories)
+                                      SizedBox(
+                                        width: tileWidth,
+                                        child: _ServiceTile(
+                                          category: c,
+                                          isDark: isDark,
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
+
                     const AppearanceSettingsCard(),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: () async {
-                        await launchUrl(
-                          Uri.parse('https://carzzi.com/privacy'),
-                          mode: LaunchMode.externalApplication,
-                        );
-                      },
-                      child: Text(
-                        'Privacy Policy',
-                        style: TextStyle(
-                          color: isDark
-                              ? AppColors.textSecondary
-                              : AppColors.textSecondaryLight,
-                        ),
+                    const SizedBox(height: 16),
+
+                    // Legal
+                    _ProfileCard(
+                      isDark: isDark,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Column(
+                        children: [
+                          _ProfileLinkRow(
+                            icon: Icons.privacy_tip_outlined,
+                            label: 'Privacy Policy',
+                            isDark: isDark,
+                            onTap: () => launchUrl(
+                              Uri.parse('https://carzzi.com/privacy'),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: _ProfileDivider(isDark: isDark, gap: 0),
+                          ),
+                          _ProfileLinkRow(
+                            icon: Icons.description_outlined,
+                            label: 'Terms of Service',
+                            isDark: isDark,
+                            onTap: () => launchUrl(
+                              Uri.parse('https://carzzi.com/terms'),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    TextButton(
+                    const SizedBox(height: 20),
+
+                    OutlinedButton.icon(
                       onPressed: () async {
-                        await launchUrl(
-                          Uri.parse('https://carzzi.com/terms'),
-                          mode: LaunchMode.externalApplication,
+                        await _authService.logout();
+                        if (!context.mounted) return;
+                        context.read<ThemeProvider>().markUnauthenticated();
+                        Navigator.pushNamedAndRemoveUntil(
+                          context,
+                          '/login',
+                          (route) => false,
                         );
                       },
-                      child: Text(
-                        'Terms of Service',
-                        style: TextStyle(
-                          color: isDark
-                              ? AppColors.textSecondary
-                              : AppColors.textSecondaryLight,
-                        ),
+                      icon: const Icon(
+                        Icons.logout_rounded,
+                        color: AppColors.error,
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          await _authService.logout();
-                          if (!context.mounted) return;
-                          context.read<ThemeProvider>().markUnauthenticated();
-                          Navigator.pushNamedAndRemoveUntil(
-                            context,
-                            '/login',
-                            (route) => false,
-                          );
-                        },
-                        icon: const Icon(
-                          Icons.logout_rounded,
+                      label: const Text(
+                        'Logout',
+                        style: TextStyle(
+                          fontSize: 15,
                           color: AppColors.error,
+                          fontWeight: FontWeight.w700,
                         ),
-                        label: const Text(
-                          'Logout',
-                          style: TextStyle(
-                            color: AppColors.error,
-                            fontWeight: FontWeight.w600,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        backgroundColor: AppColors.error.withValues(
+                          alpha: isDark ? 0.1 : 0.04,
+                        ),
+                        side: BorderSide(
+                          color: AppColors.error.withValues(
+                            alpha: isDark ? 0.45 : 0.3,
                           ),
                         ),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(
-                            color: isDark
-                                ? AppColors.error.withValues(alpha: 0.45)
-                                : AppColors.error.withValues(alpha: 0.25),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+Color _profileAccent(bool isDark) =>
+    isDark ? AppColors.primaryPurple : const Color(0xFF7C3AED);
+
+/// One offered service: icon + readable name (e.g. "battery" → Battery).
+class _ServiceTile extends StatelessWidget {
+  final String category;
+  final bool isDark;
+
+  const _ServiceTile({required this.category, required this.isDark});
+
+  static IconData _iconFor(String c) {
+    final k = c.toLowerCase();
+    if (k.contains('batter')) return Icons.battery_charging_full_rounded;
+    if (k.contains('tire') || k.contains('tyre')) {
+      return Icons.tire_repair_rounded;
+    }
+    if (k.contains('wash')) return Icons.local_car_wash_rounded;
+    if (k.contains('essential')) return Icons.shield_outlined;
+    if (k.contains('insur')) return Icons.verified_user_outlined;
+    if (k.contains('general') ||
+        k.contains('periodic') ||
+        k.contains('service')) {
+      return Icons.build_rounded;
+    }
+    return Icons.miscellaneous_services_rounded;
+  }
+
+  static String _labelFor(String c) {
+    final k = c.trim().toLowerCase();
+    const names = {
+      'general': 'General Service',
+      'tires': 'Tyres',
+      'tyres': 'Tyres',
+      'battery': 'Battery',
+      'carwash': 'Car Wash',
+      'car wash': 'Car Wash',
+    };
+    if (names.containsKey(k)) return names[k]!;
+    return k
+        .split(RegExp(r'[\s_-]+'))
+        .where((w) => w.isNotEmpty)
+        .map((w) => w[0].toUpperCase() + w.substring(1))
+        .join(' ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _profileAccent(isDark);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: isDark ? 0.12 : 0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accent.withValues(alpha: isDark ? 0.2 : 0.12),
+            ),
+            child: Icon(_iconFor(category), size: 18, color: accent),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _labelFor(category),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : const Color(0xFF111827),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileCard extends StatelessWidget {
+  final bool isDark;
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  const _ProfileCard({
+    required this.isDark,
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.backgroundSecondary : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDark ? AppColors.borderColor : const Color(0xFFEDE9FE),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.3)
+                : _profileAccent(isDark).withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _ProfileSectionTitle extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final bool isDark;
+
+  const _ProfileSectionTitle({
+    required this.icon,
+    required this.title,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _profileAccent(isDark);
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: accent.withValues(alpha: isDark ? 0.18 : 0.1),
+          ),
+          child: Icon(icon, color: accent, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: isDark ? Colors.white : const Color(0xFF111827),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileChip extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final bool isDark;
+  final bool filled;
+
+  const _ProfileChip({
+    required this.label,
+    required this.isDark,
+    this.icon,
+    this.filled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _profileAccent(isDark);
+    final fg = filled
+        ? accent
+        : (isDark ? Colors.grey[300]! : const Color(0xFF4B5563));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: filled
+            ? accent.withValues(alpha: isDark ? 0.18 : 0.1)
+            : (isDark ? AppColors.backgroundSurface : const Color(0xFFF3F4F6)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 15, color: fg),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileDivider extends StatelessWidget {
+  final bool isDark;
+  final double gap;
+
+  const _ProfileDivider({required this.isDark, this.gap = 4});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: gap),
+      child: Divider(
+        height: 1,
+        thickness: 1,
+        color: isDark ? AppColors.borderColor : const Color(0xFFF1F1F4),
+      ),
+    );
+  }
+}
+
+class _ProfileLinkRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _ProfileLinkRow({
+    required this.icon,
+    required this.label,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = isDark ? Colors.grey[400]! : const Color(0xFF6B7280);
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        minTileHeight: 52,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        leading: Icon(icon, color: muted),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: isDark ? Colors.white : const Color(0xFF111827),
+          ),
+        ),
+        trailing: Icon(Icons.chevron_right_rounded, color: muted),
+        onTap: onTap,
       ),
     );
   }
@@ -577,49 +887,55 @@ class _ProfileDetailItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: isDark
-                ? AppColors.backgroundSurface
-                : const Color(0xFFF3F4F6),
-            borderRadius: BorderRadius.circular(12),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        // Icon lines up with the label, not the middle of a long address.
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: isDark
+                  ? AppColors.backgroundSurface
+                  : const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              icon,
+              color: isDark ? Colors.grey[400] : const Color(0xFF4B5563),
+              size: 20,
+            ),
           ),
-          child: Icon(
-            icon,
-            color: isDark ? Colors.grey[400] : const Color(0xFF4B5563),
-            size: 20,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
-                  fontWeight: FontWeight.w500,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: isDark ? Colors.white : const Color(0xFF111827),
-                  fontWeight: FontWeight.w600,
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.45,
+                    color: isDark ? Colors.white : const Color(0xFF111827),
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

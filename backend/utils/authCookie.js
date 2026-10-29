@@ -79,3 +79,10 @@ export const getTokenFromSocketHandshake = (handshake) => {
 
   return null;
 };
+
+// All candidate tokens, auth payload first then cookie, so a stale
+// handshake token doesn't shadow a still-valid session cookie.
+export const getTokenCandidatesFromSocketHandshake = (handshake) => {
+  const cookies = parseCookies(handshake.headers?.cookie);
+  return [handshake.auth?.token, cookies[COOKIE_NAME]].filter(Boolean);
+};

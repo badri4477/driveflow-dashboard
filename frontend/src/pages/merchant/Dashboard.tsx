@@ -92,7 +92,7 @@ const Dashboard: React.FC = () => {
         pendingBills,
       });
 
-      setRecentBookings(bookingsData.slice(0, 5));
+      setRecentBookings(bookingsData.slice(0, 3)); // home shows max 3 (app + web)
     } catch (error) {
       console.error('Failed to fetch dashboard data', error);
       // A 401 here means the session expired mid-fetch — the global axios

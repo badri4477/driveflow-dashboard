@@ -184,11 +184,21 @@ class BookingDetail {
   final String? orderNumber;
   final String status;
   final String date;
+  final String? createdAt;
+  final String? healthSavedAt;
   final List<dynamic>? services;
   final BookingLocation? location;
   final BookingLocation? merchantLocation;
   final String? vehicleName;
   final String? vehicleId;
+  final String? vehicleMake;
+  final String? vehicleModel;
+  final String? vehicleVariant;
+  final String? vehicleType;
+  final String? vehicleColor;
+  final String? vehicleFuel;
+  final String? vehicleImage;
+  final num? vehicleMileage;
   final Map<String, dynamic>? vehicleHealthIndicators;
   final List<String> prePickupPhotos;
   final String? paymentStatus;
@@ -216,11 +226,21 @@ class BookingDetail {
     this.orderNumber,
     required this.status,
     required this.date,
+    this.createdAt,
+    this.healthSavedAt,
     this.services,
     this.location,
     this.merchantLocation,
     this.vehicleName,
     this.vehicleId,
+    this.vehicleMake,
+    this.vehicleModel,
+    this.vehicleVariant,
+    this.vehicleType,
+    this.vehicleColor,
+    this.vehicleFuel,
+    this.vehicleImage,
+    this.vehicleMileage,
     this.vehicleHealthIndicators,
     required this.prePickupPhotos,
     this.paymentStatus,
@@ -289,11 +309,21 @@ class BookingDetail {
     String? orderNumber,
     String? status,
     String? date,
+    String? createdAt,
+    String? healthSavedAt,
     List<dynamic>? services,
     BookingLocation? location,
     BookingLocation? merchantLocation,
     String? vehicleName,
     String? vehicleId,
+    String? vehicleMake,
+    String? vehicleModel,
+    String? vehicleVariant,
+    String? vehicleType,
+    String? vehicleColor,
+    String? vehicleFuel,
+    String? vehicleImage,
+    num? vehicleMileage,
     Map<String, dynamic>? vehicleHealthIndicators,
     List<String>? prePickupPhotos,
     String? paymentStatus,
@@ -321,11 +351,21 @@ class BookingDetail {
       orderNumber: orderNumber ?? this.orderNumber,
       status: status ?? this.status,
       date: date ?? this.date,
+      createdAt: createdAt ?? this.createdAt,
+      healthSavedAt: healthSavedAt ?? this.healthSavedAt,
       services: services ?? this.services,
       location: location ?? this.location,
       merchantLocation: merchantLocation ?? this.merchantLocation,
       vehicleName: vehicleName ?? this.vehicleName,
       vehicleId: vehicleId ?? this.vehicleId,
+      vehicleMake: vehicleMake ?? this.vehicleMake,
+      vehicleModel: vehicleModel ?? this.vehicleModel,
+      vehicleVariant: vehicleVariant ?? this.vehicleVariant,
+      vehicleType: vehicleType ?? this.vehicleType,
+      vehicleColor: vehicleColor ?? this.vehicleColor,
+      vehicleFuel: vehicleFuel ?? this.vehicleFuel,
+      vehicleImage: vehicleImage ?? this.vehicleImage,
+      vehicleMileage: vehicleMileage ?? this.vehicleMileage,
       vehicleHealthIndicators:
           vehicleHealthIndicators ?? this.vehicleHealthIndicators,
       prePickupPhotos: prePickupPhotos ?? this.prePickupPhotos,
@@ -438,11 +478,23 @@ class BookingDetail {
       orderNumber: _orderNumberFromJson(getField('orderNumber')),
       status: (getField('status') ?? '').toString(),
       date: (getField('date') ?? '').toString(),
+      createdAt: getField('createdAt')?.toString(),
+      healthSavedAt: getField('healthSavedAt')?.toString(),
       services: getField('services') as List?,
       location: location,
       merchantLocation: merchantLocation,
       vehicleName: vehicleName.isEmpty ? null : vehicleName,
       vehicleId: vehicle?['_id']?.toString(),
+      vehicleMake: _nonEmpty(vehicle?['make']),
+      vehicleModel: _nonEmpty(vehicle?['model']),
+      vehicleVariant: _nonEmpty(vehicle?['variant']),
+      vehicleType: _nonEmpty(vehicle?['type']),
+      vehicleColor: _nonEmpty(vehicle?['color']),
+      vehicleFuel: _nonEmpty(vehicle?['fuelType']),
+      vehicleImage: _nonEmpty(vehicle?['image']),
+      vehicleMileage: vehicle?['mileage'] is num
+          ? vehicle!['mileage'] as num
+          : num.tryParse('${vehicle?['mileage'] ?? ''}'),
       vehicleHealthIndicators: vehicle?['healthIndicators'] is Map
           ? Map<String, dynamic>.from(vehicle!['healthIndicators'] as Map)
           : null,
@@ -956,4 +1008,9 @@ class RevisitData {
       reason: json['reason']?.toString(),
     );
   }
+}
+
+String? _nonEmpty(dynamic v) {
+  final t = v?.toString().trim();
+  return t == null || t.isEmpty ? null : t;
 }

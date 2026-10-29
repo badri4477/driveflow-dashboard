@@ -33,6 +33,7 @@ import '../widgets/global_sync_refresh.dart';
 import '../state/auth_provider.dart';
 import 'package:provider/provider.dart';
 import 'chat_page.dart';
+import '../utils/chat_seen_store.dart';
 import 'coupons_page.dart';
 
 List<String> _mergeTrackPhotoUrlLists(
@@ -233,8 +234,8 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
           final statusMsg = paymentStatus == 'user_dropped'
               ? 'Payment was cancelled.'
               : paymentStatus == 'failed'
-                  ? 'Payment failed. Please try again.'
-                  : 'Payment not completed (status: $paymentStatus). Please try again.';
+              ? 'Payment failed. Please try again.'
+              : 'Payment not completed (status: $paymentStatus). Please try again.';
           Navigator.of(context).pushNamed(
             '/payment-status',
             arguments: PaymentStatusPage(
@@ -451,8 +452,10 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
       } catch (_) {}
     });
 
+    _socketService.on('loadMessages', _handleLoadMessagesForBadge);
+
     _socketService.on('receiveMessage', (data) {
-      if (!mounted) return;
+      if (!mounted || _isChatSheetOpen) return;
       try {
         final mapData = data is Map<String, dynamic>
             ? data
@@ -487,11 +490,35 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
       _nearAlertShown = false;
       _load();
       _socketService.joinRoom('booking_$nextId');
+      // Seed the unread badge from history (messages since last view).
+      _socketService.emit('getMessages', {'bookingId': nextId});
     }
+  }
+
+  bool _isChatSheetOpen = false;
+
+  Future<void> _handleLoadMessagesForBadge(dynamic data) async {
+    final bookingId = _bookingId;
+    if (!mounted || bookingId == null || _isChatSheetOpen || data is! List) {
+      return;
+    }
+    if (data.isNotEmpty &&
+        data.first is Map &&
+        (data.first as Map)['bookingId']?.toString() != bookingId) {
+      return;
+    }
+    final lastSeen = await ChatSeenStore.lastSeen(bookingId);
+    if (!mounted) return;
+    final selfId = context.read<AuthProvider>().user?.id;
+    setState(
+      () =>
+          _chatUnreadCount = ChatSeenStore.countUnread(data, lastSeen, selfId),
+    );
   }
 
   @override
   void dispose() {
+    _socketService.off('loadMessages', _handleLoadMessagesForBadge);
     _socketService.off('liveLocation');
     _socketService.off('bookingUpdated');
     _socketService.off('receiveMessage');
@@ -538,6 +565,7 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
       loadingDialogOpen = false;
       Navigator.of(context, rootNavigator: true).pop();
     }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1506,6 +1534,32 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                       }
                     }
 
+                    // Uploaded merchant invoice on S3: get a signed URL with
+                    // "attachment" so the browser downloads it instead of
+                    // previewing (same endpoint the web uses).
+                    if (url != null &&
+                        url.contains('.amazonaws.com/carzzi_uploads/')) {
+                      try {
+                        final ext =
+                            RegExp(
+                              r'\.([a-zA-Z0-9]{2,5})(?:\?|$)',
+                            ).firstMatch(url)?.group(1) ??
+                            'pdf';
+                        final name =
+                            'Carzzi_Invoice_${booking?.orderNumber ?? 'booking'}.$ext';
+                        final query = Uri(
+                          queryParameters: {'url': url, 'filename': name},
+                        ).query;
+                        final res = await ApiClient().getJson(
+                          '/upload/download-url?$query',
+                        );
+                        final signed = res['url']?.toString();
+                        if (signed != null && signed.isNotEmpty) url = signed;
+                      } catch (_) {
+                        // fall back to opening the file URL as before
+                      }
+                    }
+
                     if (url != null) {
                       final uri = Uri.parse(url);
                       if (await canLaunchUrl(uri)) {
@@ -1540,9 +1594,14 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                   'On Hold',
                 ].contains(booking.status.toUpperCase())
             ? FloatingActionButton(
-                onPressed: () {
-                  setState(() => _chatUnreadCount = 0);
-                  showModalBottomSheet(
+                onPressed: () async {
+                  setState(() {
+                    _chatUnreadCount = 0;
+                    _isChatSheetOpen = true;
+                  });
+                  await ChatSeenStore.markSeen(booking.id);
+                  if (!context.mounted) return;
+                  await showModalBottomSheet(
                     context: context,
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
@@ -1561,6 +1620,9 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                       ),
                     ),
                   );
+                  // Messages read while the sheet was open count as seen.
+                  await ChatSeenStore.markSeen(booking.id);
+                  if (mounted) setState(() => _isChatSheetOpen = false);
                 },
                 backgroundColor: const Color(0xFF2563EB),
                 child: Stack(

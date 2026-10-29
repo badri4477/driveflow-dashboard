@@ -171,25 +171,6 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/reviews', reviewRoutes);
-// Direct implementation of getMyReviews to bypass any router issues
-app.get('/api/reviews/my', async (req, res) => {
-  try {
-    // We need to verify token manually here since we are bypassing the router's protect middleware
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ message: 'Not authorized' });
-    }
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const reviews = await Review.find({ reviewer: decoded.id })
-      .populate('target', 'name email role')
-      .sort({ createdAt: -1 });
-    res.json(reviews);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-app.get('/api/reviews/my-test', (req, res) => res.json({ message: 'direct route working' }));
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/roles', roleRoutes);

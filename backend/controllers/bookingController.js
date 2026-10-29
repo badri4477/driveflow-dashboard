@@ -1906,6 +1906,16 @@ export const updateBookingStatus = async (req, res) => {
           if (!booking.deliveryOtp) booking.deliveryOtp = {};
           booking.deliveryOtp.verifiedAt = booking.deliveryOtp.verifiedAt || new Date();
           booking.deliveryOtp.verifiedByAdmin = true;
+          // Admin delivering the vehicle means the final bill was settled
+          // offline (cash/UPI at the counter) — mark it paid.
+          if (booking.paymentStatus !== 'paid') {
+            booking.paymentStatus = 'paid';
+            booking.manualPayment = {
+              markedBy: req.user._id,
+              markedAt: new Date(),
+              amount: booking.finalAmount ?? booking.totalAmount ?? 0,
+            };
+          }
         } else if (!booking.deliveryOtp || !booking.deliveryOtp.verifiedAt) {
           return res.status(400).json({ message: 'OTP verification required before marking as DELIVERED' });
         }
@@ -2377,7 +2387,8 @@ export const updateBookingDetails = async (req, res) => {
     serviceExecution,
     qc,
     billing,
-    revisit
+    revisit,
+    healthSaved
   } = req.body;
 
   try {
@@ -2519,6 +2530,12 @@ export const updateBookingDetails = async (req, res) => {
         if (booking.status === 'SERVICE_STARTED') {
           booking.status = 'SERVICE_COMPLETED';
         }
+      }
+      // Merchant pressed "Save Health Stats" on this order. Health values live
+      // on the vehicle; this marks them as belonging to this order so a new
+      // order for the same car starts with empty fields.
+      if (healthSaved === true) {
+        booking.healthSavedAt = new Date();
       }
       if (revisit) {
         if (!booking.revisit) booking.revisit = {};

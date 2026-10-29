@@ -23,15 +23,15 @@ class SocketSync {
   }
 
   static bool shouldRefreshBookings(String? event) => matches(
-        event,
-        entities: ['booking', 'approval', 'payment'],
-        prefixes: [
-          'booking_created',
-          'booking_updated',
-          'booking_cancelled',
-          'notification',
-        ],
-      );
+    event,
+    entities: ['booking', 'approval', 'payment'],
+    prefixes: [
+      'booking_created',
+      'booking_updated',
+      'booking_cancelled',
+      'notification',
+    ],
+  );
 
   static bool shouldRefreshProducts(String? event) =>
       matches(event, entities: ['product']);

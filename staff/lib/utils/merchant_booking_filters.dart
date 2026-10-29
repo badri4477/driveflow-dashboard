@@ -41,7 +41,8 @@ List<BookingSummary> filterMerchantBookings(
       final model = (booking.vehicleModel ?? '').toLowerCase();
       final customer = (booking.customerName ?? '').toLowerCase();
       final vehicleBlob = (booking.vehicleName ?? '').toLowerCase();
-      final matchesSearch = plate.contains(query) ||
+      final matchesSearch =
+          plate.contains(query) ||
           model.contains(query) ||
           customer.contains(query) ||
           vehicleBlob.contains(query);
@@ -63,10 +64,8 @@ List<BookingSummary> filterMerchantBookings(
 
 Map<String, int> computeMerchantStats(List<BookingSummary> bookings) {
   return {
-    'activeOrders':
-        bookings.where(isMerchantActiveBooking).length,
-    'completedOrders':
-        bookings.where(isMerchantCompletedBooking).length,
+    'activeOrders': bookings.where(isMerchantActiveBooking).length,
+    'completedOrders': bookings.where(isMerchantCompletedBooking).length,
     'pendingBills': bookings.where(isMerchantPendingBill).length,
   };
 }

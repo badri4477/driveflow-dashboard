@@ -118,17 +118,14 @@ export const createApproval = async (req, res) => {
         const io = getIO();
         const userId = booking.user._id.toString();
         
-        // Emit socket event to customer's room
-        io.to(`user_${userId}`).emit('newApproval', createdApproval);
-        // Also emit to booking room if anyone is watching
-        io.to(`booking_${relatedId}`).emit('newApproval', createdApproval);
-        // Also emit to admin and merchant rooms
-        io.to('admin').emit('newApproval', createdApproval);
+        // Single emit across all rooms — Socket.IO delivers once per socket
+        // even if it's in several of these rooms (separate emits duplicated
+        // the toast for a customer in both user_ and booking_ rooms).
+        const rooms = [`user_${userId}`, `booking_${relatedId}`, 'admin'];
         if (booking.merchant) {
-          const merchantId = booking.merchant._id.toString();
-          io.to(`user_${merchantId}`).emit('newApproval', createdApproval);
-          io.to('merchant').emit('newApproval', createdApproval);
+          rooms.push(`user_${booking.merchant._id.toString()}`, 'merchant');
         }
+        io.to(rooms).emit('newApproval', createdApproval);
 
         // Also emit bookingUpdated to trigger a full refresh on clients
         const fullBooking = await Booking.findById(relatedId)

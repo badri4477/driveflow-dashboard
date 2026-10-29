@@ -226,37 +226,80 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
     setServiceParts(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleServicePartImageChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        toast.error('Only image files (JPEG, PNG, WEBP, etc.) are allowed.');
-        e.target.value = '';
-        return;
-      }
-      updateServicePart(index, 'image', file);
-      // Mark that new image has been uploaded
-      updateServicePart(index, 'needsNewImage', false);
-    }
-    // Reset input value
-    e.target.value = '';
+  // Auto-save: part after-images are uploaded and persisted as soon as they're
+  // picked, so a page refresh doesn't lose them.
+  const persistServiceParts = async (parts: typeof existingServiceParts) => {
+    await bookingService.updateBookingDetails(bookingId, {
+      serviceExecution: {
+        ...booking?.serviceExecution,
+        afterPhotos: existingAfter,
+        serviceParts: parts,
+      },
+    });
+    setExistingServiceParts(parts);
   };
 
-  const handleExistingPartImageChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleServicePartImageChange = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        toast.error('Only image files (JPEG, PNG, WEBP, etc.) are allowed.');
-        e.target.value = '';
-        return;
-      }
-      setNewImagesForExistingParts(prev => ({
-        ...prev,
-        [index]: file
-      }));
-    }
-    // Reset input value
     e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Only image files (JPEG, PNG, WEBP, etc.) are allowed.');
+      return;
+    }
+    const part = serviceParts[index];
+    if (!part.name.trim() || part.price <= 0 || part.quantity <= 0) {
+      // Incomplete part: keep the file locally until Save Service Data.
+      updateServicePart(index, 'image', file);
+      updateServicePart(index, 'needsNewImage', false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res: { files: { url: string }[] } = await uploadService.uploadFiles([file]);
+      const savedPart = {
+        name: part.name,
+        price: part.price,
+        quantity: part.quantity,
+        image: res.files[0].url,
+        oldImage: part.oldImage,
+        approved: !!part.fromInspection,
+        approvalStatus: (part.fromInspection ? 'Approved' : 'Pending') as 'Approved' | 'Pending',
+        addedDuringService: !part.fromInspection,
+        fromInspection: part.fromInspection || false,
+        inspectionPartId: part.inspectionPartId,
+      };
+      await persistServiceParts([...existingServiceParts, savedPart]);
+      setServiceParts(prev => prev.filter((_, i) => i !== index));
+      toast.success(`After image saved for ${part.name}`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to save image');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExistingPartImageChange = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Only image files (JPEG, PNG, WEBP, etc.) are allowed.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res: { files: { url: string }[] } = await uploadService.uploadFiles([file]);
+      const updated = existingServiceParts.map((p, i) => (i === index ? { ...p, image: res.files[0].url } : p));
+      await persistServiceParts(updated);
+      toast.success('Image updated');
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to save image');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUpload = async () => {
@@ -366,7 +409,9 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
             serviceExecution: {
                 ...booking?.serviceExecution,
                 afterPhotos: existingAfter,
-                serviceParts: finalServiceParts
+                serviceParts: finalServiceParts,
+                // Marks service data as saved → unlocks QC Check (app + web).
+                jobEndTime: new Date().toISOString(),
             }
         });
 
@@ -461,14 +506,7 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
               }
             </p>
           </div>
-          {!isReadOnly && (
-            <button 
-                onClick={addServicePart}
-                className="px-3 py-1 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
-            >
-                Add New Discovery
-            </button>
-          )}
+          {/* "Add New Discovery" hidden — new parts go through inspection approval instead. */}
         </div>
 
         {/* Existing Service Parts */}
@@ -487,7 +525,7 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
                       <div className="flex flex-col items-center gap-1">
                         <button
                           onClick={() => window.open(part.oldImage!, '_blank')}
-                          className="w-12 h-12 object-cover rounded hover:opacity-90 transition-opacity"
+                          className="w-16 h-16 object-cover rounded hover:opacity-90 transition-opacity"
                         >
                           <img src={part.oldImage} alt="Before" className="w-full h-full object-cover rounded" />
                         </button>
@@ -499,7 +537,7 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
                         {(newImagesForExistingParts[index] || part.image) ? (
                           <button
                             onClick={() => window.open(newImagesForExistingParts[index] ? URL.createObjectURL(newImagesForExistingParts[index]) : part.image!, '_blank')}
-                            className="w-12 h-12 object-cover rounded hover:opacity-90 transition-opacity border border-border overflow-hidden"
+                            className="w-16 h-16 object-cover rounded hover:opacity-90 transition-opacity border border-border overflow-hidden"
                           >
                             <img 
                               src={newImagesForExistingParts[index] ? URL.createObjectURL(newImagesForExistingParts[index]) : part.image} 
@@ -508,21 +546,9 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
                             />
                           </button>
                         ) : (
-                          <div className="w-12 h-12 rounded bg-muted flex items-center justify-center border border-dashed border-border">
+                          <div className="w-16 h-16 rounded bg-muted flex items-center justify-center border border-dashed border-border">
                             <ImageIcon className="w-5 h-5 text-muted-foreground" />
                           </div>
-                        )}
-                        
-                        {!isReadOnly && (
-                          <label className="absolute -bottom-1 -right-1 bg-primary text-primary-foreground rounded-full p-1 cursor-pointer shadow-sm hover:scale-110 transition-transform">
-                            <Plus className="w-3 h-3" />
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => handleExistingPartImageChange(index, e)}
-                              className="hidden"
-                            />
-                          </label>
                         )}
                       </div>
                       <span className="text-[10px] text-muted-foreground uppercase">
@@ -548,7 +574,24 @@ const MediaUploadPanel: React.FC<MediaUploadPanelProps> = ({ bookingId, booking,
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-3">
+                    {!isReadOnly && (
+                      <label
+                        className={`inline-flex items-center gap-2 min-h-[44px] px-4 rounded-lg border border-primary/30 bg-background text-primary text-sm font-medium cursor-pointer hover:bg-primary/5 focus-within:ring-2 focus-within:ring-primary transition-colors ${
+                          loading ? 'opacity-50 pointer-events-none' : ''
+                        }`}
+                      >
+                        <ImageIcon className="w-4 h-4" />
+                        {part.image ? 'Change after image' : 'Upload after image'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={loading}
+                          onChange={(e) => handleExistingPartImageChange(index, e)}
+                          className="sr-only"
+                        />
+                      </label>
+                    )}
                     <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full ${
                       part.approvalStatus?.toLowerCase() === 'approved' ? 'bg-green-100 text-green-800' :
                       part.approvalStatus?.toLowerCase() === 'rejected' ? 'bg-red-100 text-red-800' :

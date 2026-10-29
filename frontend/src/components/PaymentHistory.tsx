@@ -269,7 +269,13 @@ const PaymentHistory: React.FC<PaymentHistoryProps> = ({ userId, isAdmin = false
                   <div>
                     <p className="font-medium">₹{payment.amount}</p>
                     <p className="text-sm text-gray-500">
-                      {payment.cashfreePaymentId || payment.paymentId || 'N/A'}
+                      {(payment as any).awaitingPayment
+                        ? `Booking #${(payment as any).orderId} · Service completed, awaiting customer payment`
+                        : (payment as any).manualPayment
+                        ? `Booking #${(payment as any).orderId} · Marked paid by admin on delivery`
+                        : String(payment._id).startsWith('booking_')
+                        ? `Booking #${(payment as any).orderId}`
+                        : payment.cashfreePaymentId || payment.paymentId || 'N/A'}
                     </p>
                   </div>
                 </div>

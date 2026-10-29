@@ -18,7 +18,11 @@ class MerchantPlaceholderPage extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               '$title coming soon',
-              style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 18,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),

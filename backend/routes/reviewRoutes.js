@@ -15,6 +15,7 @@ const router = express.Router();
 
 router.get('/public', getPublicReviews);
 router.post('/', protect, createReview);
+router.get('/my', protect, getMyReviews);
 router.get('/myreviews', protect, getMyReviews);
 router.get('/all', protect, admin, getAllReviews);
 router.get('/booking/:bookingId', protect, getBookingReviews);

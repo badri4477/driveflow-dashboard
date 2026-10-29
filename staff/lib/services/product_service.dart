@@ -42,7 +42,10 @@ class ProductService {
   }
 
   Future<Product> updateProduct(String id, Map<String, dynamic> data) async {
-    final response = await _api.putJson('${ApiEndpoints.products}/$id', body: data);
+    final response = await _api.putJson(
+      '${ApiEndpoints.products}/$id',
+      body: data,
+    );
     return Product.fromJson(response);
   }
 

@@ -5,6 +5,9 @@ import '../core/api_client.dart';
 import '../core/app_colors.dart';
 import '../services/notification_service.dart';
 import '../utils/merchant_notification_redirect.dart';
+import '../widgets/states/status_feedback.dart';
+import '../widgets/states/skeleton.dart';
+import '../widgets/states/state_view.dart';
 
 class NotificationsPage extends StatefulWidget {
   final bool isMerchant;
@@ -18,6 +21,7 @@ class NotificationsPage extends StatefulWidget {
 class _NotificationsPageState extends State<NotificationsPage> {
   final NotificationService _notificationService = NotificationService();
   bool _loading = true;
+  String? _loadError;
   List<NotificationItem> _items = [];
 
   @override
@@ -27,32 +31,29 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
     try {
       final items = await _notificationService.listMyNotifications();
       if (!mounted) return;
       setState(() => _items = items);
     } on ApiException catch (e) {
       if (!mounted) return;
-      if (e.statusCode == 403 &&
-          e.message.toLowerCase().contains('pending')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Your account is pending approval. Please wait for admin approval.',
-            ),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message)),
-        );
-      }
+      final pending =
+          e.statusCode == 403 && e.message.toLowerCase().contains('pending');
+      setState(() {
+        _loadError = pending
+            ? 'Your account is pending approval. Please wait for admin approval.'
+            : e.message;
+      });
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load notifications')),
-      );
+      setState(() {
+        _loadError =
+            'Failed to load notifications. Check your connection and try again.';
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -67,23 +68,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
     try {
       await _notificationService.deleteNotification(item.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Notification deleted'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      StatusFeedback.auto('Notification deleted');
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _items = originalItems;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to delete notification: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      StatusFeedback.error('Failed to delete notification: $e');
     }
   }
 
@@ -152,14 +143,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
       if (!mounted) return;
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('All notifications marked as read')),
-      );
+      StatusFeedback.auto('All notifications marked as read');
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to mark all as read')),
-      );
+      StatusFeedback.auto('Failed to mark all as read');
     }
   }
 
@@ -190,14 +177,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
       await _notificationService.clearAll();
       if (!mounted) return;
       setState(() => _items = []);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('All notifications cleared')),
-      );
+      StatusFeedback.auto('All notifications cleared');
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to clear notifications')),
-      );
+      StatusFeedback.auto('Failed to clear notifications');
     }
   }
 
@@ -234,14 +217,24 @@ class _NotificationsPageState extends State<NotificationsPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const SkeletonList()
+          : _loadError != null && _items.isEmpty
+          ? RefreshIndicator(
+              onRefresh: _load,
+              child: StateView.error(
+                message: _loadError,
+                onRetry: _load,
+                refreshable: true,
+              ),
+            )
           : _items.isEmpty
-          ? Center(
-              child: Text(
-                'No notifications yet',
-                style: TextStyle(
-                  color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
-                ),
+          ? RefreshIndicator(
+              onRefresh: _load,
+              child: const StateView.empty(
+                title: 'No notifications yet',
+                message: 'Booking updates and alerts will show up here.',
+                icon: Icons.notifications_none_rounded,
+                refreshable: true,
               ),
             )
           : RefreshIndicator(

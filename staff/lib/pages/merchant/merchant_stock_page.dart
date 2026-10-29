@@ -3,6 +3,9 @@ import '../../core/socket_sync.dart';
 import '../../services/product_service.dart';
 import '../../widgets/global_sync_refresh.dart';
 import '../../widgets/merchant/merchant_nav.dart';
+import '../../widgets/states/status_feedback.dart';
+import '../../widgets/states/skeleton.dart';
+import '../../widgets/states/state_view.dart';
 
 class MerchantStockPage extends StatefulWidget {
   const MerchantStockPage({super.key});
@@ -15,6 +18,7 @@ class _MerchantStockPageState extends State<MerchantStockPage> {
   final ProductService _service = ProductService();
   List<Product> _products = [];
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -23,7 +27,12 @@ class _MerchantStockPageState extends State<MerchantStockPage> {
   }
 
   Future<void> _load() async {
-    if (mounted) setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
     try {
       final data = await _service.getProducts();
       if (mounted) {
@@ -34,10 +43,11 @@ class _MerchantStockPageState extends State<MerchantStockPage> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to load stock')),
-        );
+        setState(() {
+          _isLoading = false;
+          _loadError =
+              'Failed to load stock. Check your connection and try again.';
+        });
       }
     }
   }
@@ -51,9 +61,7 @@ class _MerchantStockPageState extends State<MerchantStockPage> {
       _load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to update quantity')),
-        );
+        StatusFeedback.auto('Failed to update quantity');
       }
     }
   }
@@ -66,115 +74,133 @@ class _MerchantStockPageState extends State<MerchantStockPage> {
         if (!_isLoading) _load();
       },
       child: MerchantScaffold(
-      title: 'Stock Management',
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _products.isEmpty
-                ? const Center(child: Text('No stock items found'))
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _products.length,
-                    itemBuilder: (context, index) {
-                      final product = _products[index];
-                      final isLowStock = product.quantity <= product.threshold;
-                      final isOutOfStock = product.quantity == 0;
+        title: 'Stock Management',
+        body: RefreshIndicator(
+          onRefresh: _load,
+          child: _isLoading
+              ? const SkeletonList()
+              : _loadError != null
+              ? StateView.error(
+                  message: _loadError,
+                  onRetry: _load,
+                  refreshable: true,
+                )
+              : _products.isEmpty
+              ? const StateView.empty(
+                  title: 'No stock items yet',
+                  message: 'Products you add to stock will show up here.',
+                  icon: Icons.inventory_2_outlined,
+                  refreshable: true,
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _products.length,
+                  itemBuilder: (context, index) {
+                    final product = _products[index];
+                    final isLowStock = product.quantity <= product.threshold;
+                    final isOutOfStock = product.quantity == 0;
 
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          side: BorderSide(color: Colors.grey[200]!),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          product.name,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        Text(
-                                          product.category,
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey[600],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  _StatusBadge(
-                                    isOutOfStock: isOutOfStock,
-                                    isLowStock: isLowStock,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    '₹${product.price}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18,
-                                      color: Colors.deepPurple,
-                                    ),
-                                  ),
-                                  Row(
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(color: Colors.grey[200]!),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      IconButton(
-                                        onPressed: () => _updateQuantity(product, -1),
-                                        icon: const Icon(Icons.remove_circle_outline),
-                                        color: Colors.grey[600],
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey[100],
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        child: Text(
-                                          '${product.quantity}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
+                                      Text(
+                                        product.name,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
                                         ),
                                       ),
-                                      IconButton(
-                                        onPressed: () => _updateQuantity(product, 1),
-                                        icon: const Icon(Icons.add_circle_outline),
-                                        color: Colors.deepPurple,
+                                      Text(
+                                        product.category,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
                                       ),
                                     ],
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                ),
+                                _StatusBadge(
+                                  isOutOfStock: isOutOfStock,
+                                  isLowStock: isLowStock,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  '₹${product.price}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: Colors.deepPurple,
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      onPressed: () =>
+                                          _updateQuantity(product, -1),
+                                      icon: const Icon(
+                                        Icons.remove_circle_outline,
+                                      ),
+                                      color: Colors.grey[600],
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[100],
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        '${product.quantity}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: () =>
+                                          _updateQuantity(product, 1),
+                                      icon: const Icon(
+                                        Icons.add_circle_outline,
+                                      ),
+                                      color: Colors.deepPurple,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
+                ),
+        ),
       ),
-    ),
     );
   }
 }

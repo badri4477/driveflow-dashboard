@@ -105,7 +105,9 @@ class ReviewService {
   final ApiClient _api = ApiClient();
 
   Future<List<Review>> getMerchantReviews(String merchantId) async {
-    final response = await _api.getAny('${ApiEndpoints.reviews}/target/$merchantId');
+    final response = await _api.getAny(
+      '${ApiEndpoints.reviews}/target/$merchantId',
+    );
     if (response is List) {
       return response.map((json) => Review.fromJson(json)).toList();
     }

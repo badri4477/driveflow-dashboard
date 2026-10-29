@@ -26,9 +26,9 @@ class SocketService {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       withCredentials: true,
-      auth: {
-        token: getMemoryAccessToken() || undefined,
-      },
+      // Function form is re-evaluated on every (re)connect, so reconnects
+      // after a server restart or token refresh send the current token.
+      auth: (cb) => cb({ token: getMemoryAccessToken() || undefined }),
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

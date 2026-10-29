@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import User from './models/User.js';
 import Booking from './models/Booking.js';
 import { canAccessBooking } from './utils/bookingAccess.js';
-import { getTokenFromSocketHandshake } from './utils/authCookie.js';
+import { getTokenCandidatesFromSocketHandshake } from './utils/authCookie.js';
 import { loadUserFromToken } from './middleware/authMiddleware.js';
 import Message from './models/Message.js';
 import { sendPushToUser, sendPushToRole } from './utils/pushService.js';
@@ -82,15 +82,21 @@ export const initSocket = (server) => {
   // Authentication Middleware
   io.use(async (socket, next) => {
     try {
-      const token = getTokenFromSocketHandshake(socket.handshake);
-      
-      if (token) {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        // Honor tokenVersion revocation the same way the REST `protect`
-        // middleware does — otherwise a logged-out mobile/staff token
-        // (which never expires on its own) could still open an
-        // authenticated socket and join the user's private room forever.
-        socket.user = await loadUserFromToken(decoded);
+      // Try each token: an expired handshake token must not block a valid
+      // cookie, or the socket silently connects anonymously and misses
+      // user_/booking_ room events.
+      for (const token of getTokenCandidatesFromSocketHandshake(socket.handshake)) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          // Honor tokenVersion revocation the same way the REST `protect`
+          // middleware does — otherwise a logged-out mobile/staff token
+          // (which never expires on its own) could still open an
+          // authenticated socket and join the user's private room forever.
+          socket.user = await loadUserFromToken(decoded);
+          if (socket.user) break;
+        } catch {
+          // try next candidate
+        }
       }
       next();
     } catch (error) {

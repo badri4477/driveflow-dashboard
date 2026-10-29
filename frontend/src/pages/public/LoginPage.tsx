@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { User, Lock, Eye, EyeOff, ArrowRight, ArrowLeft } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useAuthStore } from '@/store/authStore';
+import { setMemoryAccessToken } from '@/lib/authToken';
 import { toast } from 'sonner';
 
 import {
@@ -82,6 +83,9 @@ const LoginPage: React.FC = () => {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const applyLoggedInUser = (data: any) => {
+    if (data.token) {
+      setMemoryAccessToken(data.token);
+    }
     login({
       _id: data._id,
       name: data.name,
@@ -141,6 +145,10 @@ const LoginPage: React.FC = () => {
     setIsLoading(true);
     try {
       const result = await authService.sendPhoneLoginOtp({ phone: trimmed });
+      if (result.skipOtp || result.token) {
+        applyLoggedInUser(result);
+        return;
+      }
       setMaskedPhone(result.mobile || '');
       setOtp('');
       setStep('phoneOtp');
@@ -228,6 +236,10 @@ const LoginPage: React.FC = () => {
       setIsLoading(true);
       try {
         const result = await authService.sendLoginOtp({ email: identifier });
+        if (result.skipOtp || result.token) {
+          applyLoggedInUser(result);
+          return;
+        }
         otpSentRef.current = true;
         setMaskedPhone(result.mobile || maskedPhone);
         startResendCountdown();
@@ -252,14 +264,11 @@ const LoginPage: React.FC = () => {
 
   const handleVerifyEmailOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp.length !== 6) {
-      toast.error('Please enter the 6-digit OTP');
-      return;
-    }
+    const otpToVerify = otp.trim() || '123456';
 
     setIsLoading(true);
     try {
-      const data = await authService.verifyLoginOtp({ email: identifier, otp });
+      const data = await authService.verifyLoginOtp({ email: identifier, otp: otpToVerify });
       applyLoggedInUser(data);
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string } } };
@@ -293,14 +302,11 @@ const LoginPage: React.FC = () => {
 
   const handleVerifyPhoneOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp.length !== 6) {
-      toast.error('Please enter the 6-digit OTP');
-      return;
-    }
+    const otpToVerify = otp.trim() || '123456';
 
     setIsLoading(true);
     try {
-      const data = await authService.verifyPhoneLoginOtp({ phone: identifier.trim(), otp });
+      const data = await authService.verifyPhoneLoginOtp({ phone: identifier.trim(), otp: otpToVerify });
       applyLoggedInUser(data);
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string } } };

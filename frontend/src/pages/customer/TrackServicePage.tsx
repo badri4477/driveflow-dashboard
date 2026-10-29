@@ -121,6 +121,7 @@ const MapController = ({ center, destination, zoom, isMaximized }: { center: [nu
 };
 
 import { useTracking } from '@/hooks/use-tracking';
+import { uploadService, invoiceFileName } from '@/services/uploadService';
 
 const TrackServicePage: React.FC = () => {
   const { id } = useParams();
@@ -385,8 +386,8 @@ const TrackServicePage: React.FC = () => {
 
       socketService.on('newApproval', (newApproval: ApprovalRequest) => {
         // Refresh approvals list when a new one arrives
+        // Toast is shown globally by SocketNotificationListener.
         fetchPendingApprovals();
-        toast.info(`New approval request: ${newApproval.type === 'PartReplacement' ? newApproval.data.name : 'Update'}`);
       });
 
       return () => {
@@ -607,7 +608,11 @@ const TrackServicePage: React.FC = () => {
     
     // If merchant has uploaded a file, prioritize that
     if (order.billing?.fileUrl) {
-      window.open(order.billing.fileUrl, '_blank');
+      try {
+        await uploadService.downloadFile(order.billing.fileUrl, invoiceFileName(order.billing.fileUrl, order.orderNumber));
+      } catch {
+        toast.error('Failed to download invoice. Please try again later.');
+      }
       return;
     }
 

@@ -16,6 +16,7 @@ class AuthProvider extends ChangeNotifier {
   bool loading = false;
   bool _isInitialized = false;
   String? lastError;
+
   /// HTTP status of the most recent failed auth call, when available —
   /// lets callers distinguish e.g. "account not found" (404) from other
   /// failures without parsing [lastError] text.
@@ -305,12 +306,31 @@ class AuthProvider extends ChangeNotifier {
     return null;
   }
 
+  Future<void> _completeSkippedOtpSession(Map<String, dynamic> res) async {
+    final token = (res['accessToken'] ?? res['token'])?.toString();
+    if (token != null && token.isNotEmpty) {
+      await AppStorage().setToken(token);
+    }
+    final skippedUser = _userFromAuthResponse(res);
+    if (skippedUser != null) {
+      await AppStorage().setUserJson(jsonEncode(skippedUser.toJson()));
+    }
+    await _completeLoginSession(AuthResult(token: token, user: skippedUser));
+  }
+
+  bool _isOtpSkipped(Map<String, dynamic> res) {
+    final token = (res['accessToken'] ?? res['token'])?.toString();
+    return res['skipOtp'] == true || (token != null && token.isNotEmpty);
+  }
+
   Future<String?> sendLoginOtp(String email) async {
     loading = true;
     lastError = null;
     notifyListeners();
     try {
       final res = await _auth.sendLoginOtp(email: email);
+      // APP_ENV=testing: backend skips OTP and returns a session (as web).
+      if (_isOtpSkipped(res)) await _completeSkippedOtpSession(res);
       loading = false;
       notifyListeners();
       return (res['mobile'] as String?) ?? '';
@@ -354,6 +374,8 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
     try {
       final res = await _auth.sendPhoneLoginOtp(phone: phone);
+      // APP_ENV=testing: backend skips OTP and returns a session (as web).
+      if (_isOtpSkipped(res)) await _completeSkippedOtpSession(res);
       loading = false;
       notifyListeners();
       return (res['mobile'] as String?) ?? '';

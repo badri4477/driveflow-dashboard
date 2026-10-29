@@ -120,6 +120,11 @@ class _LoginPageState extends State<LoginPage>
       final auth = context.read<AuthProvider>();
       final masked = await auth.sendPhoneLoginOtp(digits);
       if (!mounted) return;
+      if (auth.isAuthenticated) {
+        setState(() => _submitting = false);
+        await completeAuthNavigation(context, auth.homeRoute);
+        return;
+      }
 
       if (masked == null) {
         if (auth.lastErrorStatusCode == 404) {
@@ -244,6 +249,10 @@ class _LoginPageState extends State<LoginPage>
 
       final sentMasked = await auth.sendLoginOtp(email);
       if (!mounted) return;
+      if (auth.isAuthenticated) {
+        await completeAuthNavigation(context, auth.homeRoute);
+        return;
+      }
 
       if (sentMasked != null) {
         setState(() => _maskedPhone = sentMasked);
@@ -322,6 +331,10 @@ class _LoginPageState extends State<LoginPage>
             )
           : await auth.sendLoginOtp(_identifierController.text.trim());
       if (!mounted) return;
+      if (auth.isAuthenticated) {
+        await completeAuthNavigation(context, auth.homeRoute);
+        return;
+      }
       if (masked != null) {
         setState(() => _maskedPhone = masked);
         _startResendCountdown();
@@ -391,9 +404,7 @@ class _LoginPageState extends State<LoginPage>
         actions: [
           TextButton(
             onPressed: () => leaveAuthScreens(context),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.white70,
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.white70),
             child: const Text(
               'Skip',
               style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.2),
@@ -749,8 +760,7 @@ class _LoginPageState extends State<LoginPage>
                                                       child: Text(
                                                         'Resend OTP in ${_resendSecondsLeft}s',
                                                         style: const TextStyle(
-                                                          color:
-                                                              Colors.white38,
+                                                          color: Colors.white38,
                                                           fontWeight:
                                                               FontWeight.w600,
                                                         ),

@@ -486,17 +486,25 @@ const StaffOrderPage: React.FC = () => {
     }
   }, [order, staffLocation, setActiveBookingId, navigate]);
 
+  // No live location once the order is finished (delivered/completed/cancelled).
+  const isOrderFinished = ['DELIVERED', 'COMPLETED', 'CANCELLED'].includes(order?.status ?? '');
+
   useEffect(() => {
-    // Set active booking ID for tracking context
-    if (id) {
-      setActiveBookingId(id);
-      startTracking();
+    // Set active booking ID for tracking context — only while the order is
+    // still in progress (wait for it to load so a finished one never tracks).
+    if (!id || !order) return;
+    if (isOrderFinished) {
+      stopTracking();
+      setActiveBookingId(null);
+      return;
     }
+    setActiveBookingId(id);
+    startTracking();
 
     return () => {
       setActiveBookingId(null);
     };
-  }, [id, setActiveBookingId, startTracking]);
+  }, [id, !!order, isOrderFinished, setActiveBookingId, startTracking, stopTracking]);
 
   const fetchOrder = React.useCallback(async () => {
     if (!id) return;
@@ -1789,7 +1797,7 @@ const StaffOrderPage: React.FC = () => {
                   <span className="sm:hidden">Navigate</span>
                 </Button>
                 
-                {isTracking && (
+                {isTracking && !isOrderFinished && (
                   <div className="mt-2 flex items-center justify-center gap-2 text-xs text-green-600 font-medium animate-pulse">
                     <span className="w-2 h-2 bg-green-600 rounded-full"></span>
                     <span className="hidden sm:inline">Sharing Live Location</span>

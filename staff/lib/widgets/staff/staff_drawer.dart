@@ -146,9 +146,7 @@ class _StaffDrawerTile extends StatelessWidget {
               gradient: active ? AppStyles.primaryGradient : null,
               color: active
                   ? null
-                  : (isDark
-                        ? Colors.transparent
-                        : const Color(0xFFF8F8F8)),
+                  : (isDark ? Colors.transparent : const Color(0xFFF8F8F8)),
               boxShadow: active
                   ? [
                       BoxShadow(
@@ -189,9 +187,7 @@ class _StaffDrawerTile extends StatelessWidget {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: active
-                          ? Colors.white
-                          : const Color(0xFFEF4444),
+                      color: active ? Colors.white : const Color(0xFFEF4444),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(

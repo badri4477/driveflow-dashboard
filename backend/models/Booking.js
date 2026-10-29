@@ -234,6 +234,16 @@ const bookingSchema = mongoose.Schema(
       enum: ['pending', 'paid', 'failed'],
       default: 'pending',
     },
+    // Set when an admin marks the booking DELIVERED and the payment is
+    // recorded manually instead of through Cashfree.
+    // Set when the merchant saves health stats on this order (see
+    // updateBookingDetails). Health values themselves live on the vehicle.
+    healthSavedAt: { type: Date },
+    manualPayment: {
+      markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      markedAt: { type: Date },
+      amount: { type: Number },
+    },
     paymentId: {
       type: String, // Cash Free Payment payment ID
     },

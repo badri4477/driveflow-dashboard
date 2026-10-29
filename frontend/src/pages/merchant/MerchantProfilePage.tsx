@@ -1,6 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { User as UserIcon, Mail, Phone, MapPin, Save, Store, Crosshair } from 'lucide-react';
+import { User as UserIcon, Mail, Phone, MapPin, Save, Store, Crosshair, Wrench, BatteryCharging, Disc, Droplets, ShieldCheck, Settings2, Hammer } from 'lucide-react';
+
+// Offered service → icon + readable name (same mapping as the merchant app).
+const serviceIcon = (c: string) => {
+  const k = c.toLowerCase();
+  if (k.includes('batter')) return BatteryCharging;
+  if (k.includes('tire') || k.includes('tyre')) return Disc;
+  if (k.includes('wash')) return Droplets;
+  if (k.includes('essential') || k.includes('insur')) return ShieldCheck;
+  if (k.includes('general') || k.includes('periodic') || k.includes('service')) return Wrench;
+  return Settings2;
+};
+const serviceLabel = (c: string) => {
+  const k = c.trim().toLowerCase();
+  const names: Record<string, string> = { general: 'General Service', tires: 'Tyres', tyres: 'Tyres', battery: 'Battery', carwash: 'Car Wash', 'car wash': 'Car Wash' };
+  return names[k] ?? k.split(/[\s_-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+};
 import { useAuthStore } from '@/store/authStore';
 import { userService } from '@/services/userService';
 import api from '@/services/api';
@@ -217,11 +233,6 @@ const MerchantProfilePage: React.FC = () => {
             <p className="text-sm text-indigo-600 dark:text-indigo-400 font-medium bg-indigo-50 dark:bg-indigo-900/20 px-3 py-1 rounded-full">
               Merchant Account
             </p>
-            {user?.category && user.category.length > 0 && (
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold">
-                Category: {user.category.join(', ')}
-              </p>
-            )}
             
             <div className="w-full mt-6 space-y-3">
               <div className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
@@ -234,6 +245,38 @@ const MerchantProfilePage: React.FC = () => {
               </div>
             </div>
           </motion.div>
+
+          {user?.category && user.category.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 }}
+              className="mt-6 bg-white dark:bg-gray-800 rounded-2xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center">
+                  <Hammer className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <h3 className="font-semibold text-lg text-gray-900 dark:text-white">Services Offered</h3>
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                {user.category.map((c: string) => {
+                  const Icon = serviceIcon(c);
+                  return (
+                    <div
+                      key={c}
+                      className="flex items-center gap-2.5 p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/40"
+                    >
+                      <span className="w-9 h-9 shrink-0 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center">
+                        <Icon className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                      </span>
+                      <span className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{serviceLabel(c)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
         </div>
 
         {/* Edit Form */}

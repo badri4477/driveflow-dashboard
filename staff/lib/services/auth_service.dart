@@ -76,13 +76,13 @@ class AuthService {
   }
 
   /// Step 2 — send OTP to WhatsApp/SMS.
-  Future<String> sendLoginOtp({required String email}) async {
+  Future<LoginPrepareResult> sendLoginOtp({required String email}) async {
     final response = await _api.postJson(
       ApiEndpoints.authLoginSendOtp,
       body: {'email': email.trim()},
     );
 
-    return response['mobile']?.toString() ?? '';
+    return _otpOrSession(response);
   }
 
   /// Step 3 — verify OTP and complete login.
@@ -100,13 +100,27 @@ class AuthService {
 
   /// Passwordless mobile-number login — sends an OTP straight to the given
   /// phone (no password step).
-  Future<String> sendPhoneLoginOtp({required String phone}) async {
+  Future<LoginPrepareResult> sendPhoneLoginOtp({required String phone}) async {
     final response = await _api.postJson(
       ApiEndpoints.authPhoneLoginSendOtp,
       body: {'phone': phone.trim()},
     );
 
-    return response['mobile']?.toString() ?? '';
+    return _otpOrSession(response);
+  }
+
+  /// Backend skips OTP when APP_ENV=testing (same as web): it returns
+  /// `skipOtp`/a token and the session is completed immediately.
+  Future<LoginPrepareResult> _otpOrSession(
+    Map<String, dynamic> response,
+  ) async {
+    final hasToken =
+        (response['accessToken'] ?? response['token'])?.toString().isNotEmpty ==
+        true;
+    if (response['skipOtp'] == true || hasToken) {
+      return LoginPrepareResult(user: await _completeSession(response));
+    }
+    return LoginPrepareResult(maskedPhone: response['mobile']?.toString());
   }
 
   /// Verify the phone-login OTP and complete login.

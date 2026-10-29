@@ -13,6 +13,9 @@ import '../core/socket_sync.dart';
 import '../widgets/global_sync_refresh.dart';
 import '../widgets/order_route_map.dart';
 import '../services/socket_service.dart';
+import '../widgets/states/status_feedback.dart';
+import '../widgets/states/skeleton.dart';
+import '../widgets/states/state_view.dart';
 
 class StaffOrderDetailPage extends StatefulWidget {
   const StaffOrderDetailPage({super.key});
@@ -70,7 +73,11 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     }
   }
 
+  // Last requested booking id, so the error state can retry it.
+  String? _requestedId;
+
   Future<void> _load(String id) async {
+    _requestedId = id;
     // Only show full loading if we don't have a booking yet
     if (_booking == null) {
       setState(() {
@@ -171,12 +178,8 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
       if (status == 'VEHICLE_PICKED') {
         if (booking.prePickupPhotos.length < 4) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Please upload 4 vehicle photos before picking up the vehicle',
-                ),
-              ),
+            StatusFeedback.auto(
+              'Please upload 4 vehicle photos before picking up the vehicle',
             );
           }
           if (mounted) {
@@ -212,12 +215,8 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
             targetLat == null ||
             targetLng == null) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Location not available. Tap Navigate first, then mark arrived.',
-                ),
-              ),
+            StatusFeedback.auto(
+              'Location not available. Tap Navigate first, then mark arrived.',
             );
             setState(() {
               _updatingStatus = false;
@@ -233,12 +232,8 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         );
         if (distance > StaffTrackingService.autoStatusDistanceMeters) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'You are too far from the location to update status',
-                ),
-              ),
+            StatusFeedback.auto(
+              'You are too far from the location to update status',
             );
             setState(() {
               _updatingStatus = false;
@@ -269,9 +264,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         }
         if (otp.isEmpty) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Enter the delivery code')),
-            );
+            StatusFeedback.auto('Enter the delivery code');
             setState(() {
               _updatingStatus = false;
             });
@@ -282,9 +275,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         await _service.verifyDeliveryOtp(booking.id, otp);
         await _load(booking.id);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Delivery confirmed')),
-        );
+        StatusFeedback.auto('Delivery confirmed');
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -310,12 +301,8 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
       if (status == 'OUT_FOR_DELIVERY') {
         if (booking.paymentStatus != 'paid') {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Customer payment is pending. Please wait for payment before picking up the vehicle.',
-                ),
-              ),
+            StatusFeedback.auto(
+              'Customer payment is pending. Please wait for payment before picking up the vehicle.',
             );
           }
           if (mounted) {
@@ -386,12 +373,18 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
           }
         }
         if (status == 'DELIVERY') {
-          final isBatteryOnly = booking.services?.any((s) =>
-                  s['category']?.toString().toLowerCase().contains('battery') ??
-                  false) ??
+          final isBatteryOnly =
+              booking.services?.any(
+                (s) =>
+                    s['category']?.toString().toLowerCase().contains(
+                      'battery',
+                    ) ??
+                    false,
+              ) ??
               false;
           if (!isBatteryOnly) {
-            final afterCount = booking.serviceExecution?.afterPhotos.length ?? 0;
+            final afterCount =
+                booking.serviceExecution?.afterPhotos.length ?? 0;
             if (afterCount < _batteryAfterPhotosRequired) {
               if (mounted) {
                 await showDialog<void>(
@@ -432,18 +425,14 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Status updated to $status')));
+        StatusFeedback.auto('Status updated to $status');
       }
     } catch (e) {
       if (!mounted) return;
       final message = e is ApiException && e.message.isNotEmpty
           ? e.message
           : 'Failed to update status';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      StatusFeedback.auto(message);
     } finally {
       if (mounted) {
         setState(() {
@@ -471,9 +460,12 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
       return _carWashRequiredPhotos;
     }
     if (booking.batteryTire?.isBatteryTireService == true) {
-      final isBatteryOnly = booking.services?.any((s) =>
-              s['category']?.toString().toLowerCase().contains('battery') ??
-              false) ??
+      final isBatteryOnly =
+          booking.services?.any(
+            (s) =>
+                s['category']?.toString().toLowerCase().contains('battery') ??
+                false,
+          ) ??
           false;
       final status = _normalizeStatus(booking.status);
       if (status == 'INSTALLATION') {
@@ -498,11 +490,16 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     if (booking.batteryTire?.isBatteryTireService == true) {
       final status = _normalizeStatus(booking.status);
       if (status == 'INSTALLATION') {
-        final isBatteryOnly = booking.services?.any((s) =>
-                s['category']?.toString().toLowerCase().contains('battery') ??
-                false) ??
+        final isBatteryOnly =
+            booking.services?.any(
+              (s) =>
+                  s['category']?.toString().toLowerCase().contains('battery') ??
+                  false,
+            ) ??
             false;
-        return isBatteryOnly ? 0 : (booking.serviceExecution?.afterPhotos.length ?? 0);
+        return isBatteryOnly
+            ? 0
+            : (booking.serviceExecution?.afterPhotos.length ?? 0);
       }
     }
     return booking.prePickupPhotos.length;
@@ -525,9 +522,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     final remaining = maxPhotos - existingCount;
     if (remaining <= 0) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('You already captured $maxPhotos photos')),
-      );
+      StatusFeedback.auto('You already captured $maxPhotos photos');
       return;
     }
     final image = await _picker.pickImage(
@@ -586,9 +581,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     final remaining = maxPhotos - existingCount;
     if (remaining <= 0) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('You already captured $maxPhotos photos')),
-      );
+      StatusFeedback.auto('You already captured $maxPhotos photos');
       return;
     }
     final images = await _picker.pickMultiImage(
@@ -599,12 +592,8 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     if (!mounted) return;
     if (images.isEmpty) return;
     if (images.length > remaining) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'You cannot upload more than $maxPhotos photos. (Remaining: $remaining)',
-          ),
-        ),
+      StatusFeedback.auto(
+        'You cannot upload more than $maxPhotos photos. (Remaining: $remaining)',
       );
       return;
     }
@@ -644,17 +633,11 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         });
         await _load(booking.id);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Photos uploaded')),
-        );
+        StatusFeedback.auto('Photos uploaded');
         final count = _currentPhasePhotoCount(_booking!);
         if (count < _carWashRequiredPhotos) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '$_incompleteCarWashPhotosMessage ($count/$_carWashRequiredPhotos)',
-              ),
-            ),
+          StatusFeedback.auto(
+            '$_incompleteCarWashPhotosMessage ($count/$_carWashRequiredPhotos)',
           );
         }
         return;
@@ -674,16 +657,15 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
             'prePickupPhotos': merged,
           });
         } else if (status == 'INSTALLATION') {
-          final existing = booking.serviceExecution?.afterPhotos ?? const <String>[];
+          final existing =
+              booking.serviceExecution?.afterPhotos ?? const <String>[];
           final remaining = _batteryAfterPhotosRequired - existing.length;
           final merged = [
             ...existing,
             ...uploaded.take(remaining),
           ].take(_batteryAfterPhotosRequired).toList();
           await _service.updateBookingDetails(booking.id, {
-            'serviceExecution': {
-              'afterPhotos': merged,
-            },
+            'serviceExecution': {'afterPhotos': merged},
           });
         } else {
           throw ApiException(
@@ -697,18 +679,14 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         });
         await _load(booking.id);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Photos uploaded')),
-        );
+        StatusFeedback.auto('Photos uploaded');
         final count = _currentPhasePhotoCount(_booking!);
         final required = _requiredPhotoCountForCurrentFlow(_booking!);
         if (count < required) {
           final message = status == 'INSTALLATION'
               ? _batteryAfterPhotosMessage
               : _batteryBeforePhotosMessage;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('$message ($count/$required)')),
-          );
+          StatusFeedback.auto('$message ($count/$required)');
         }
         return;
       }
@@ -738,18 +716,14 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         );
         _selectedPhotos = const [];
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pre-pickup photos uploaded')),
-      );
+      StatusFeedback.auto('Pre-pickup photos uploaded');
     } catch (e) {
       if (!mounted) return;
       String message = 'Failed to upload photos';
       if (e is ApiException && e.message.isNotEmpty) {
         message = e.message;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      StatusFeedback.auto(message);
     } finally {
       if (mounted) {
         setState(() {
@@ -765,9 +739,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     final targetLng = dest?.lng;
     if (targetLat == null || targetLng == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Destination location not available')),
-      );
+      StatusFeedback.auto('Destination location not available');
       return;
     }
 
@@ -789,9 +761,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     final uri = Uri.https('www.google.com', '/maps/dir/', query);
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not open maps')));
+      StatusFeedback.auto('Could not open maps');
     }
   }
 
@@ -812,17 +782,35 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     final isDark = theme.brightness == Brightness.dark;
 
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (_error != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Order Details')),
-        body: Center(child: Text(_error!)),
+      return const Scaffold(
+        body: SkeletonList(itemCount: 5, showLeading: false),
       );
     }
     final booking = _booking;
+    if (_error != null && booking == null) {
+      final retryId = _requestedId;
+      return Scaffold(
+        appBar: AppBar(title: const Text('Order Details')),
+        body: retryId == null
+            ? StateView.wrong(
+                title: 'Order not available',
+                message: _error,
+                actionLabel: 'Go back',
+                onAction: () => Navigator.of(context).maybePop(),
+              )
+            : StateView.error(message: _error, onRetry: () => _load(retryId)),
+      );
+    }
     if (booking == null) {
-      return const Scaffold(body: Center(child: Text('Order not found')));
+      return Scaffold(
+        appBar: AppBar(title: const Text('Order Details')),
+        body: StateView.wrong(
+          title: 'Order not found',
+          message: 'This order may have been removed or reassigned.',
+          actionLabel: 'Go back',
+          onAction: () => Navigator.of(context).maybePop(),
+        ),
+      );
     }
 
     final String orderNum =
@@ -948,11 +936,7 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
                 snap: true,
                 snapSizes: const [0.18, 0.38, 0.88],
                 builder: (context, scrollController) {
-                  return _buildDetailsSheet(
-                    booking,
-                    isDark,
-                    scrollController,
-                  );
+                  return _buildDetailsSheet(booking, isDark, scrollController);
                 },
               ),
             ),
@@ -1090,16 +1074,19 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
     final requiredPhotos = _requiredPhotoCountForCurrentFlow(booking);
     final currentPhotoCount = _currentPhasePhotoCount(booking);
     final hasRequiredPhotos = currentPhotoCount >= requiredPhotos;
-    final isBattery = isBatteryTire &&
-        (booking.services?.any((s) =>
-                s['category']?.toString().toLowerCase().contains('battery') ??
-                false) ??
+    final isBattery =
+        isBatteryTire &&
+        (booking.services?.any(
+              (s) =>
+                  s['category']?.toString().toLowerCase().contains('battery') ??
+                  false,
+            ) ??
             false);
     bool shouldShowUpload = false;
     if (isCarWash) {
       shouldShowUpload =
           (normalizedStatus == 'REACHED_CUSTOMER' ||
-              normalizedStatus == 'CAR_WASH_STARTED');
+          normalizedStatus == 'CAR_WASH_STARTED');
     } else if (isBatteryTire) {
       if (normalizedStatus == 'REACHED_CUSTOMER') {
         shouldShowUpload = true;
@@ -1894,20 +1881,26 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
 
   Widget _buildPhotoBadge(BookingDetail booking, {bool compact = false}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final isBatteryOnly = booking.services?.any((s) =>
-            s['category']?.toString().toLowerCase().contains('battery') ??
-            false) ??
+    final isBatteryOnly =
+        booking.services?.any(
+          (s) =>
+              s['category']?.toString().toLowerCase().contains('battery') ??
+              false,
+        ) ??
         false;
     final status = _normalizeStatus(booking.status);
-    
+
     int required = _requiredPhotoCountForCurrentFlow(booking);
     int count = _currentPhasePhotoCount(booking);
-    
-    if (isBatteryOnly && (status == 'INSTALLATION' || status == 'DELIVERY' || status == 'COMPLETED')) {
+
+    if (isBatteryOnly &&
+        (status == 'INSTALLATION' ||
+            status == 'DELIVERY' ||
+            status == 'COMPLETED')) {
       required = _batteryBeforePhotosRequired;
       count = booking.prePickupPhotos.length;
     }
-    
+
     final completed = count >= required;
     final borderColor = completed
         ? (isDark ? AppColors.success : const Color(0xFF16A34A))

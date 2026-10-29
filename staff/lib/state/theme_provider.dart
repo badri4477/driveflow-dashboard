@@ -12,8 +12,7 @@ class ThemeProvider extends ChangeNotifier {
 
   /// Login/onboarding stay on the branded dark theme. Signed-in users
   /// follow Light / Dark / System (default System).
-  ThemeMode get appThemeMode =>
-      _isAuthenticated ? _mode : ThemeMode.dark;
+  ThemeMode get appThemeMode => _isAuthenticated ? _mode : ThemeMode.dark;
 
   Future<void> loadThemeMode() async {
     if (_isLoaded) return;

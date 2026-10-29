@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from 'lucide-react';
 
+const FINAL_BILL_STATUSES = ['SERVICE_COMPLETED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'];
+
 const MyPaymentsPage = () => {
   const [payments, setPayments] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,9 +63,23 @@ const MyPaymentsPage = () => {
       ? booking.finalAmount
       : (booking.billing?.total || booking.finalAmount || booking.totalAmount);
 
+  // Periodic/general services are billed after the service: inspection can
+  // add parts, so the amount is only an estimate until the service completes.
+  const isAwaitingFinalBill = (booking: Booking) => {
+    if (booking.paymentStatus === 'paid' || booking.status === 'CANCELLED') return false;
+    if ((booking as any).carWash?.isCarWashService) return false;
+    const categories = (Array.isArray(booking.services) ? booking.services : [])
+      .map((s: any) => (typeof s === 'object' && s?.category ? String(s.category).toLowerCase() : ''));
+    if (categories.some((c) => /battery|tire|tyre|wash|essentials/.test(c))) return false;
+    return !FINAL_BILL_STATUSES.includes(booking.status);
+  };
+
   const getPaymentStatusDisplay = (booking: Booking) => {
     if (booking.status === 'CANCELLED' && booking.paymentStatus !== 'paid') {
       return { label: 'cancelled', variant: 'outline' as const };
+    }
+    if (isAwaitingFinalBill(booking)) {
+      return { label: 'Due after service', variant: 'outline' as const };
     }
     return {
       label: booking.paymentStatus,
@@ -119,7 +135,12 @@ const MyPaymentsPage = () => {
                     <p className="text-sm text-foreground break-words">
                       Service for {getVehicleLabel(booking)}
                     </p>
-                    <p className="text-sm font-semibold text-primary">₹{getAmount(booking)}</p>
+                    <p className="text-sm font-semibold text-primary">
+                      {isAwaitingFinalBill(booking) && (
+                        <span className="text-xs font-normal text-muted-foreground mr-1">Est.</span>
+                      )}
+                      ₹{getAmount(booking)}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -144,7 +165,12 @@ const MyPaymentsPage = () => {
                         <TableCell className="text-sm max-w-[200px] truncate">
                           Service for {getVehicleLabel(booking)}
                         </TableCell>
-                        <TableCell className="text-sm font-medium">₹{getAmount(booking)}</TableCell>
+                        <TableCell className="text-sm font-medium">
+                          {isAwaitingFinalBill(booking) && (
+                            <span className="text-xs font-normal text-muted-foreground mr-1">Est.</span>
+                          )}
+                          ₹{getAmount(booking)}
+                        </TableCell>
                         <TableCell>
                           <Badge variant={getPaymentStatusDisplay(booking).variant} className="text-xs">
                             {getPaymentStatusDisplay(booking).label}

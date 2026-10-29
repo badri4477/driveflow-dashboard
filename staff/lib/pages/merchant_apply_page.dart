@@ -202,7 +202,8 @@ class _MerchantApplyPageState extends State<MerchantApplyPage> {
                 validator: (v) {
                   final value = v?.trim() ?? '';
                   if (value.isEmpty) return 'Email is required';
-                  if (!_isValidEmail(value)) return 'Enter a valid email address';
+                  if (!_isValidEmail(value))
+                    return 'Enter a valid email address';
                   return null;
                 },
               ),
@@ -449,7 +450,11 @@ class _ApplyField extends StatelessWidget {
       decoration: InputDecoration(
         hintText: hintText,
         hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
-        prefixIcon: Icon(prefixIcon, color: AppColors.cinematicOrange, size: 20),
+        prefixIcon: Icon(
+          prefixIcon,
+          color: AppColors.cinematicOrange,
+          size: 20,
+        ),
         suffixIcon: suffix,
         counterText: '',
         filled: true,

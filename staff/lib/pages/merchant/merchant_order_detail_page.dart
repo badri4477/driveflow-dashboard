@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,8 +16,14 @@ import '../../services/booking_service.dart';
 import '../../core/socket_sync.dart';
 import '../../services/socket_service.dart';
 import '../../services/vehicle_service.dart';
+import '../../utils/chat_seen_store.dart';
 import '../../widgets/global_sync_refresh.dart';
-import '../../widgets/merchant/merchant_staff_live_map.dart';
+import '../../widgets/order_route_map.dart';
+import '../../widgets/states/status_feedback.dart';
+import '../../widgets/states/skeleton.dart';
+import '../../widgets/states/state_view.dart';
+import '../../widgets/image_source_sheet.dart';
+import '../../widgets/image_viewer.dart';
 
 class MerchantOrderDetailPage extends StatefulWidget {
   const MerchantOrderDetailPage({super.key});
@@ -91,6 +99,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
   void initState() {
     super.initState();
     _socketService.on('receiveMessage', _handleIncomingChatForBadge);
+    _socketService.on('loadMessages', _handleLoadMessagesForBadge);
     _socketService.on('liveLocation', _handleLiveLocation);
     _socketService.on('bookingUpdated', _handleBookingUpdated);
   }
@@ -115,7 +124,32 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     _warrantyPriceController.dispose();
     _warrantyMonthsController.dispose();
     _socketService.off('receiveMessage', _handleIncomingChatForBadge);
+    _socketService.off('loadMessages', _handleLoadMessagesForBadge);
     super.dispose();
+  }
+
+  // Seed the chat badge from history: messages from others since this
+  // device last opened the chat (persists across leaving the screen).
+  Future<void> _handleLoadMessagesForBadge(dynamic data) async {
+    if (!mounted || _booking == null || _isChatOpen || data is! List) return;
+    final bookingId = _booking!.id;
+    if (data.isNotEmpty &&
+        data.first is Map &&
+        (data.first as Map)['bookingId']?.toString() != bookingId) {
+      return;
+    }
+    final lastSeen = await ChatSeenStore.lastSeen(bookingId);
+    final userJson = await AppStorage().getUserJson();
+    String? selfId;
+    if (userJson != null) {
+      final user = jsonDecode(userJson);
+      selfId = (user['_id'] ?? user['id'])?.toString();
+    }
+    if (!mounted) return;
+    setState(
+      () =>
+          _unreadChatCount = ChatSeenStore.countUnread(data, lastSeen, selfId),
+    );
   }
 
   void _handleIncomingChatForBadge(dynamic data) {
@@ -160,11 +194,19 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     }
   }
 
+  // Last requested booking id + load failure, for the inline error state.
+  String? _requestedId;
+  String? _loadError;
+
   Future<void> _load(String id) async {
+    _requestedId = id;
     // Only show full loading if we don't have a booking yet
     if (_booking == null) {
       if (mounted) {
-        setState(() => _isLoading = true);
+        setState(() {
+          _isLoading = true;
+          _loadError = null;
+        });
       }
     }
 
@@ -179,11 +221,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
             _isPaidAndCompleted(data);
 
         if (shouldAutoReturnToPrevious) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Payment completed. Returning to home.'),
-            ),
-          );
+          StatusFeedback.auto('Payment completed. Returning to home.');
           Navigator.pushNamedAndRemoveUntil(
             context,
             '/merchant-dashboard',
@@ -209,15 +247,17 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
           // Sync controllers with loaded data
           _invoiceNumberController.text = data.billing?.invoiceNumber ?? '';
-          _partsCostController.text =
-              data.billing?.partsTotal.toString() ?? '0';
-          _labourCostController.text =
-              data.billing?.labourCost.toString() ?? '0';
-          _gstController.text = data.billing?.gst.toString() ?? '0';
-          _pickupDropPriceController.text =
-              (data.billing?.pickupDropPrice ?? data.pickupDropPrice)
-                  ?.toString() ??
-              '';
+          // Same initial values as web BillUploadPanel: empty instead of
+          // "0" (so typing doesn't give "0100"), parts from recorded parts.
+          final recordedParts = _recordedPartsTotal(data);
+          _partsCostController.text = recordedParts > 0
+              ? _amountText(recordedParts)
+              : '';
+          final labour = data.billing?.labourCost ?? 0;
+          _labourCostController.text = labour > 0 ? _amountText(labour) : '';
+          final gst = data.billing?.gst ?? 0;
+          _gstController.text = gst > 0 ? _amountText(gst) : '';
+          _pickupDropPriceController.text = _amountText(_pickupDropFor(data));
           if (data.billing?.invoiceDate != null) {
             _selectedInvoiceDate = DateTime.parse(data.billing!.invoiceDate!);
             _invoiceDateController.text = DateFormat(
@@ -244,21 +284,35 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
               data.batteryTire?.warranty?.warrantyMonths?.toString() ?? '';
           _warrantyImage = data.batteryTire?.warranty?.image;
 
-          // Sync sent inspection parts
-          _sentInspectionPartIds.clear();
-          if (data.serviceExecution?.serviceParts != null) {
-            _sentInspectionPartIds.addAll(
-              data.serviceExecution!.serviceParts
+          // Sync sent inspection parts: saved ones + ones already in the
+          // upload list (so a refresh doesn't re-enable "Send" → duplicates).
+          _sentInspectionPartIds
+            ..clear()
+            ..addAll(
+              (data.serviceExecution?.serviceParts ?? const [])
                   .where((part) => part.fromInspection == true)
                   .map((part) => part.inspectionPartId ?? '')
                   .where((id) => id.isNotEmpty),
+            )
+            ..addAll(
+              _newServiceParts
+                  .map((p) => (p['inspectionPartId'] ?? '').toString())
+                  .where((id) => id.isNotEmpty),
             );
+          // Same as web: approved inspection parts go straight into the
+          // service parts list, ready for their after image.
+          for (final entry in _approvedInspectionParts(data)) {
+            final id = 'inspection_${entry.key}';
+            if (_sentInspectionPartIds.contains(id)) continue;
+            _newServiceParts.add(_servicePartFromInspection(entry.value, id));
+            _sentInspectionPartIds.add(id);
           }
         });
         final bool isBattery =
             _booking?.batteryTire?.isBatteryTireService == true;
         final bool isCarWash = _booking?.carWash?.isCarWashService == true;
         final bool hasApprovedParts = _hasApprovedParts(data);
+        unawaited(_loadPickupDropFromReference(data));
         final bool showFullTabs =
             !isBattery && (!isCarWash || hasApprovedParts);
 
@@ -301,15 +355,19 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
           }
         }
         _socketService.joinRoom('booking_$id');
+        _socketService.emit('getMessages', {'bookingId': id});
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Failed to load order details')),
-          );
+        setState(() {
+          _isLoading = false;
+          if (_booking == null) {
+            _loadError =
+                'Failed to load order details. Check your connection and try again.';
+          }
+        });
+        if (_booking != null) {
+          StatusFeedback.error('Could not refresh this order');
         }
       }
     }
@@ -350,7 +408,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     final payment = (booking.paymentStatus ?? '').toLowerCase();
     final status = booking.status.trim();
     if (payment == 'paid') return true;
-    if (['DELIVERED', 'COMPLETED', 'CANCELLED'].contains(status.toUpperCase())) {
+    if ([
+      'DELIVERED',
+      'COMPLETED',
+      'CANCELLED',
+    ].contains(status.toUpperCase())) {
       return true;
     }
     if (!_isGeneralWorkshopOrder(booking)) return false;
@@ -364,12 +426,12 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     return !visible.contains(status.toUpperCase());
   }
 
+  /// True only after "Save Service Data" (it records jobEndTime). Auto-saved
+  /// part/after images don't count, so QC stays locked until the merchant
+  /// actually saves — same as web.
   bool _hasServiceDataSaved(BookingDetail booking) {
-    final execution = booking.serviceExecution;
-    if (execution == null) return false;
-    return execution.afterPhotos.isNotEmpty ||
-        execution.serviceParts.isNotEmpty ||
-        (execution.jobEndTime != null && execution.jobEndTime!.isNotEmpty);
+    final end = booking.serviceExecution?.jobEndTime;
+    return end != null && end.isNotEmpty;
   }
 
   int _maxUnlockedTabIndex(BookingDetail booking) {
@@ -382,6 +444,16 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     }
     return 0; // Only Overview
   }
+
+  /// Health indicators live on the vehicle. They're shown only once health
+  /// was saved on THIS order (booking.healthSavedAt); a new order for the same
+  /// car starts empty. (The vehicle's lastUpdated can't be used — completing
+  /// any general service re-stamps it.)
+  bool _isHealthFromThisOrder(BookingDetail booking, Map<String, dynamic> m) =>
+      booking.healthSavedAt != null;
+
+  /// Edited since the last save → "Save Health Stats" is active again.
+  bool _healthDirty = false;
 
   void _syncHealthDraft(BookingDetail booking) {
     const keys = [
@@ -397,6 +469,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       final map = data is Map
           ? Map<String, dynamic>.from(data)
           : <String, dynamic>{};
+      if (!_isHealthFromThisOrder(booking, map)) {
+        _healthDraft[key] = const _HealthDraft(
+          value: 0,
+          fixedKm: 0,
+          fixedDays: 0,
+        );
+        continue;
+      }
       _healthDraft[key] = _HealthDraft(
         value: (map['value'] is num) ? (map['value'] as num).toDouble() : 0,
         fixedKm: (map['fixedKm'] is num) ? (map['fixedKm'] as num).toInt() : 0,
@@ -410,9 +490,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
   Future<void> _saveHealthIndicators() async {
     if (_booking == null || (_booking!.vehicleId ?? '').isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vehicle not found for this booking')),
-      );
+      StatusFeedback.auto('Vehicle not found for this booking');
       return;
     }
 
@@ -432,17 +510,21 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       });
 
       await _vehicleService.updateVehicleHealth(_booking!.vehicleId!, payload);
+      // Mark health as saved on this order (keeps fields filled for it).
+      await _service.updateBookingDetails(_booking!.id, {'healthSaved': true});
+      _healthDirty = false;
       await _load(_booking!.id);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Vehicle health updated')));
+        StatusFeedback.success('Vehicle health saved');
+        // Same as web: after health → Billing.
+        final controller = _tabController;
+        if (controller != null && controller.length > 5) {
+          controller.animateTo(5);
+        }
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to update vehicle health')),
-        );
+        StatusFeedback.auto('Failed to update vehicle health');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -450,7 +532,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
   }
 
   Future<String?> _pickAndUploadImage(ImageSource source) async {
-    final XFile? photo = await _picker.pickImage(
+    final XFile? photo = await pickImageSafely(
+      _picker,
       source: source,
       maxWidth: 1024,
       maxHeight: 1024,
@@ -473,9 +556,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Failed to upload image')),
-          );
+          StatusFeedback.auto('Failed to upload image');
         }
       }
     } finally {
@@ -488,7 +569,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
   Future<XFile?> _pickImageFileSafely(ImageSource source) async {
     try {
-      return await _picker.pickImage(
+      return await pickImageSafely(
+        _picker,
         source: source,
         maxWidth: 1024,
         maxHeight: 1024,
@@ -496,19 +578,18 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unable to open image picker. Please try Gallery.'),
-          ),
-        );
+        StatusFeedback.auto('Unable to open image picker. Please try Gallery.');
       }
       return null;
     }
   }
 
   Future<void> _pickBillFile() async {
-    final XFile? photo = await _picker.pickImage(
-      source: ImageSource.gallery,
+    final source = await chooseImageSource(context);
+    if (source == null) return;
+    final XFile? photo = await pickImageSafely(
+      _picker,
+      source: source,
       maxWidth: 1024,
       maxHeight: 1024,
       imageQuality: 50,
@@ -526,30 +607,22 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     // Validation
     if (newStatus == 'SERVICE_COMPLETED') {
       if (!(_booking!.inspection?.completedAt != null)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please complete inspection first')),
-        );
+        StatusFeedback.auto('Please complete inspection first');
         return;
       }
       if (!(_booking!.qc?.completedAt != null)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please complete QC first')),
-        );
+        StatusFeedback.auto('Please complete QC first');
         return;
       }
       if (_booking!.billing?.fileUrl == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please upload invoice in Billing tab')),
-        );
+        StatusFeedback.auto('Please upload invoice in Billing tab');
         return;
       }
     }
 
     if (newStatus == 'OUT_FOR_DELIVERY') {
       if (_booking!.paymentStatus != 'paid') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Waiting for customer payment')),
-        );
+        StatusFeedback.auto('Waiting for customer payment');
         return;
       }
     }
@@ -566,18 +639,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            SnackBar(content: Text('Status updated to $newStatus')),
-          );
+          StatusFeedback.auto('Status updated to $newStatus');
         }
       }
     } catch (e) {
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Failed to update status')),
-          );
+          StatusFeedback.auto('Failed to update status');
         }
       }
     } finally {
@@ -609,13 +678,25 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     if (_isLoading) {
       return Scaffold(
         backgroundColor: isDark ? AppColors.backgroundPrimary : Colors.white,
-        body: const Center(child: CircularProgressIndicator()),
+        body: const SkeletonList(itemCount: 5, showLeading: false),
       );
     }
     if (_booking == null) {
+      final retryId = _requestedId;
       return Scaffold(
         backgroundColor: isDark ? AppColors.backgroundPrimary : Colors.white,
-        body: const Center(child: Text('Order not found')),
+        appBar: AppBar(title: const Text('Order Details')),
+        body: _loadError != null && retryId != null
+            ? StateView.error(
+                message: _loadError,
+                onRetry: () => _load(retryId),
+              )
+            : StateView.wrong(
+                title: 'Order not found',
+                message: 'This order may have been removed or reassigned.',
+                actionLabel: 'Go back',
+                onAction: () => Navigator.of(context).maybePop(),
+              ),
       );
     }
 
@@ -633,262 +714,269 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     final paymentStatus = (_booking!.paymentStatus ?? 'pending').toLowerCase();
     final isPaid = paymentStatus == 'paid';
 
-    return Stack(
-      children: [
-        Scaffold(
-      backgroundColor: isDark ? AppColors.backgroundPrimary : Colors.white,
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: isDark ? AppColors.backgroundPrimary : Colors.white,
-        foregroundColor: isDark ? Colors.white : Colors.black,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Order #$orderNum',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-                color: isDark ? Colors.white : Colors.black,
+    // Opened with nothing behind it (e.g. from a notification): Back goes to
+    // Orders instead of closing the app.
+    return PopScope(
+      canPop: Navigator.of(context).canPop(),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        Navigator.of(context).pushReplacementNamed('/merchant-orders');
+      },
+      child: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: isDark
+                ? AppColors.backgroundPrimary
+                : Colors.white,
+            appBar: AppBar(
+              elevation: 0,
+              toolbarHeight: 104,
+              backgroundColor: isDark
+                  ? AppColors.backgroundPrimary
+                  : Colors.white,
+              foregroundColor: isDark ? Colors.white : Colors.black,
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, size: 26),
+                tooltip: 'Back',
+                // maybePop so the PopScope fallback below also applies.
+                onPressed: () => Navigator.maybePop(context),
+              ),
+              titleSpacing: 4,
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Order #$orderNum',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 22,
+                      letterSpacing: -0.3,
+                      color: isDark ? Colors.white : const Color(0xFF111827),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _formatOrderDate(_booking!.date),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      color: isDark
+                          ? Colors.grey[400]
+                          : const Color(0xFF6B7280),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      _overviewPill(
+                        label: BookingDetail.getStatusLabel(
+                          _booking!.status,
+                          services: _booking?.services,
+                        ),
+                        icon: Icons.local_shipping_rounded,
+                      ),
+                      _overviewPill(
+                        label: isPaid
+                            ? 'Paid'
+                            : paymentStatus[0].toUpperCase() +
+                                  paymentStatus.substring(1),
+                        icon: isPaid
+                            ? Icons.check_circle_rounded
+                            : Icons.schedule_rounded,
+                        color: isPaid ? null : AppColors.warning,
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            Row(
-              children: [
-                Text(
-                  DateFormat(
-                    'dd MMM yyyy',
-                  ).format(DateTime.parse(_booking!.date)),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.grey[400] : Colors.grey,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '•',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.grey[400] : Colors.grey,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  BookingDetail.getStatusLabel(
-                    _booking!.status,
-                    services: _booking?.services,
-                  ),
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: isDark
-                        ? AppColors.primaryPurple
-                        : const Color(0xFF7C3AED),
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  isPaid ? '● Paid' : '○ ${paymentStatus.toUpperCase()}',
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    color: isPaid
-                        ? AppColors.success
-                        : const Color(0xFFD97706),
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      body: _tabController == null
-          ? const SizedBox.shrink()
-          : Column(
-              children: [
-                _buildStatusControl(),
-                Container(
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? AppColors.backgroundSecondary
-                        : const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: TabBar(
-                    controller: _tabController!,
-                    isScrollable: showFullTabs,
-                    padding: EdgeInsets.zero,
-                    tabAlignment: showFullTabs
-                        ? TabAlignment.start
-                        : TabAlignment.fill,
-                    indicator: BoxDecoration(
-                      color: isDark
-                          ? AppColors.primaryPurple
-                          : const Color(0xFF7C3AED),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color:
-                              (isDark
-                                      ? AppColors.primaryPurple
-                                      : const Color(0xFF7C3AED))
-                                  .withValues(alpha: 0.2),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    labelColor: Colors.white,
-                    unselectedLabelColor: isDark
-                        ? Colors.grey[400]
-                        : const Color(0xFF6B7280),
-                    labelStyle: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                    unselectedLabelStyle: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    tabs: isBattery
-                        ? const [Tab(text: 'OVERVIEW'), Tab(text: 'WARRANTY')]
-                        : (showFullTabs
-                              ? [
-                                  const Tab(text: 'OVERVIEW'),
-                                  const Tab(text: 'INSPECTION'),
-                                  Tab(
-                                    child: Opacity(
-                                      opacity: maxUnlockedIndex >= 2
-                                          ? 1.0
-                                          : 0.5,
-                                      child: const Text('SERVICE'),
-                                    ),
-                                  ),
-                                  Tab(
-                                    child: Opacity(
-                                      opacity: maxUnlockedIndex >= 3
-                                          ? 1.0
-                                          : 0.5,
-                                      child: const Text('QC CHECK'),
-                                    ),
-                                  ),
-                                  Tab(
-                                    child: Opacity(
-                                      opacity: maxUnlockedIndex >= 4
-                                          ? 1.0
-                                          : 0.5,
-                                      child: const Text('HEALTH'),
-                                    ),
-                                  ),
-                                  Tab(
-                                    child: Opacity(
-                                      opacity: maxUnlockedIndex >= 5
-                                          ? 1.0
-                                          : 0.5,
-                                      child: const Text('BILLING'),
-                                    ),
-                                  ),
-                                ]
-                              : const [Tab(text: 'OVERVIEW')]),
-                    onTap: (index) {
-                      if (!showFullTabs) return;
-                      if (index > maxUnlockedIndex) {
-                        _tabController!.index = _tabController!.previousIndex
-                            .clamp(0, maxUnlockedIndex)
-                            .toInt();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              maxUnlockedIndex == 0
-                                  ? 'Start service to unlock Inspection tab.'
-                                  : maxUnlockedIndex == 1
-                                  ? 'Confirm inspection to unlock Service tab.'
-                                  : maxUnlockedIndex == 2
-                                  ? 'Save service data to unlock QC Check tab.'
-                                  : 'Confirm QC to unlock remaining tabs.',
-                            ),
-                          ),
-                        );
-                        return;
-                      }
-                    },
-                  ),
-                ),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController!,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: isBattery
-                        ? [_buildOverview(), _buildWarranty()]
-                        : (showFullTabs
-                              ? [
-                                  _buildOverview(),
-                                  _buildInspection(),
-                                  _buildServiceExecution(),
-                                  _buildQC(),
-                                  _buildHealth(),
-                                  _buildBilling(),
-                                ]
-                              : [_buildOverview()]),
-                  ),
-                ),
-              ],
-            ),
-      floatingActionButton: _buildChatButton(),
-        ),
-        if (_serviceStartingOverlay)
-          Positioned.fill(
-            child: ColoredBox(
-              color: Colors.black.withValues(alpha: 0.45),
-              child: Center(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 32),
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: isDark ? AppColors.backgroundSecondary : Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+            body: _tabController == null
+                ? const SizedBox.shrink()
+                : Column(
                     children: [
-                      const CircularProgressIndicator(),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Starting service…',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: isDark ? Colors.white : Colors.black87,
+                      _buildStatusControl(),
+                      Container(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? AppColors.backgroundSecondary
+                              : const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: TabBar(
+                          controller: _tabController!,
+                          isScrollable: showFullTabs,
+                          padding: EdgeInsets.zero,
+                          tabAlignment: showFullTabs
+                              ? TabAlignment.start
+                              : TabAlignment.fill,
+                          indicator: BoxDecoration(
+                            color: isDark
+                                ? AppColors.primaryPurple
+                                : const Color(0xFF7C3AED),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color:
+                                    (isDark
+                                            ? AppColors.primaryPurple
+                                            : const Color(0xFF7C3AED))
+                                        .withValues(alpha: 0.2),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          labelColor: Colors.white,
+                          unselectedLabelColor: isDark
+                              ? Colors.grey[400]
+                              : const Color(0xFF6B7280),
+                          labelStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          unselectedLabelStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          tabs: isBattery
+                              ? [
+                                  _iconTab(Icons.dashboard_rounded, 'Overview'),
+                                  _iconTab(Icons.verified_rounded, 'Warranty'),
+                                ]
+                              : (showFullTabs
+                                    ? [
+                                        _iconTab(
+                                          Icons.dashboard_rounded,
+                                          'Overview',
+                                        ),
+                                        _iconTab(
+                                          Icons.assignment_rounded,
+                                          'Inspection',
+                                        ),
+                                        _iconTab(
+                                          Icons.build_rounded,
+                                          'Service',
+                                          locked: maxUnlockedIndex < 2,
+                                        ),
+                                        _iconTab(
+                                          Icons.verified_user_rounded,
+                                          'QC Check',
+                                          locked: maxUnlockedIndex < 3,
+                                        ),
+                                        _iconTab(
+                                          Icons.health_and_safety_rounded,
+                                          'Health',
+                                          locked: maxUnlockedIndex < 4,
+                                        ),
+                                        _iconTab(
+                                          Icons.receipt_long_rounded,
+                                          'Billing',
+                                          locked: maxUnlockedIndex < 5,
+                                        ),
+                                      ]
+                                    : [
+                                        _iconTab(
+                                          Icons.dashboard_rounded,
+                                          'Overview',
+                                        ),
+                                      ]),
+                          onTap: (index) {
+                            if (!showFullTabs) return;
+                            if (index > maxUnlockedIndex) {
+                              _tabController!.index = _tabController!
+                                  .previousIndex
+                                  .clamp(0, maxUnlockedIndex)
+                                  .toInt();
+                              StatusFeedback.auto(
+                                maxUnlockedIndex == 0
+                                    ? 'Start service to unlock Inspection tab.'
+                                    : maxUnlockedIndex == 1
+                                    ? 'Confirm inspection to unlock Service tab.'
+                                    : maxUnlockedIndex == 2
+                                    ? 'Save service data to unlock QC Check tab.'
+                                    : 'Confirm QC to unlock remaining tabs.',
+                              );
+                              return;
+                            }
+                          },
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Please wait while we update this order.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isDark ? Colors.grey[400] : Colors.grey[600],
+                      Expanded(
+                        child: TabBarView(
+                          controller: _tabController!,
+                          physics: const NeverScrollableScrollPhysics(),
+                          children: isBattery
+                              ? [_buildOverview(), _buildWarranty()]
+                              : (showFullTabs
+                                    ? [
+                                        _buildOverview(),
+                                        _buildInspection(),
+                                        _buildServiceExecution(),
+                                        _buildQC(),
+                                        _buildHealth(),
+                                        _buildBilling(),
+                                      ]
+                                    : [_buildOverview()]),
                         ),
                       ),
                     ],
                   ),
+            floatingActionButton: _buildChatButton(),
+          ),
+          if (_serviceStartingOverlay)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.45),
+                child: Center(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 32),
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? AppColors.backgroundSecondary
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Starting service…',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Please wait while we update this order.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: isDark ? Colors.grey[400] : Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -936,6 +1024,35 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
+  /// Remaining life % — same rule as web (frontend/src/lib/vehicleHealthRemaining.ts):
+  /// with Fixed KM/Days it's 100% until a last service date exists, then it
+  /// decays by whichever interval is used up faster; otherwise manual value.
+  int _remainingHealthPercent(_HealthDraft draft, Map<String, dynamic> raw) {
+    if (draft.fixedKm <= 0 && draft.fixedDays <= 0) {
+      return draft.value.clamp(0, 100).round();
+    }
+    final lastDate = DateTime.tryParse('${raw['lastServiceDate'] ?? ''}');
+    if (lastDate == null) return 100;
+
+    final now = DateTime.now();
+    final diffDays = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(lastDate.year, lastDate.month, lastDate.day))
+        .inDays
+        .abs();
+    final lastKm = (raw['lastServiceKm'] as num?) ?? 0;
+    final currentKm = _booking?.vehicleMileage ?? 0;
+    final diffKm = (currentKm - lastKm).clamp(0, double.infinity);
+
+    final usedDays = draft.fixedDays > 0
+        ? (diffDays / draft.fixedDays * 100).clamp(0, 100)
+        : 0;
+    final usedKm = draft.fixedKm > 0
+        ? (diffKm / draft.fixedKm * 100).clamp(0, 100)
+        : 0;
+    final used = usedDays > usedKm ? usedDays : usedKm;
+    return (100 - used).clamp(0, 100).round();
+  }
+
   Widget _buildHealth() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final health = _booking?.vehicleHealthIndicators;
@@ -970,7 +1087,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
     if (health == null || health.isEmpty) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, _fabClearance),
         children: [
           Container(
             padding: const EdgeInsets.all(20),
@@ -994,36 +1111,19 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, _fabClearance),
       children: [
         Container(
           padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: isDark ? AppColors.backgroundSecondary : Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: isDark ? AppColors.borderColor : const Color(0xFFE5E7EB),
-            ),
-          ),
+          decoration: _cardDecoration(isDark),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(
-                    Icons.health_and_safety_outlined,
-                    color: isDark
-                        ? AppColors.primaryPurple
-                        : const Color(0xFF7C3AED),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
+                  _sectionTitle(
+                    Icons.health_and_safety_rounded,
                     'Vehicle Health Indicators',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: isDark ? Colors.white : const Color(0xFF111827),
-                    ),
                   ),
                 ],
               ),
@@ -1033,8 +1133,12 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 final map = data is Map
                     ? Map<String, dynamic>.from(data)
                     : <String, dynamic>{};
+                final fromThisOrder = _isHealthFromThisOrder(_booking!, map);
                 final draft =
                     _healthDraft[meta.keyName] ??
+                    (!fromThisOrder
+                        ? const _HealthDraft(value: 0, fixedKm: 0, fixedDays: 0)
+                        : null) ??
                     _HealthDraft(
                       value: (map['value'] is num)
                           ? (map['value'] as num).toDouble()
@@ -1049,10 +1153,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                     );
                 _healthDraft[meta.keyName] = draft;
 
-                final normalized = (draft.value.clamp(0, 100)) / 100;
-                final valueColor = draft.value > 80
+                final remaining = _remainingHealthPercent(draft, map);
+                final normalized = remaining / 100;
+                final valueColor = remaining <= 20
                     ? AppColors.error
-                    : draft.value > 50
+                    : remaining <= 50
                     ? AppColors.warning
                     : AppColors.success;
 
@@ -1090,7 +1195,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                             ),
                           ),
                           Text(
-                            '${draft.value.toStringAsFixed(0)}%',
+                            '$remaining%',
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
@@ -1116,34 +1221,54 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                         children: [
                           Expanded(
                             child: TextFormField(
-                              initialValue: draft.fixedKm.toString(),
+                              initialValue: draft.fixedKm == 0
+                                  ? ''
+                                  : draft.fixedKm.toString(),
                               keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
                               textInputAction: TextInputAction.done,
                               decoration: const InputDecoration(
                                 labelText: 'Fixed KM',
+                                hintText: 'e.g. 10000',
                                 isDense: true,
                               ),
                               onChanged: (v) {
-                                _healthDraft[meta.keyName] = draft.copyWith(
-                                  fixedKm: int.tryParse(v) ?? 0,
-                                );
+                                // setState so remaining % updates live.
+                                setState(() {
+                                  _healthDirty = true;
+                                  _healthDraft[meta.keyName] = draft.copyWith(
+                                    fixedKm: int.tryParse(v) ?? 0,
+                                  );
+                                });
                               },
                             ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: TextFormField(
-                              initialValue: draft.fixedDays.toString(),
+                              initialValue: draft.fixedDays == 0
+                                  ? ''
+                                  : draft.fixedDays.toString(),
                               keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
                               textInputAction: TextInputAction.done,
                               decoration: const InputDecoration(
                                 labelText: 'Fixed Days',
+                                hintText: 'e.g. 180',
                                 isDense: true,
                               ),
                               onChanged: (v) {
-                                _healthDraft[meta.keyName] = draft.copyWith(
-                                  fixedDays: int.tryParse(v) ?? 0,
-                                );
+                                // setState so remaining % updates live.
+                                setState(() {
+                                  _healthDirty = true;
+                                  _healthDraft[meta.keyName] = draft.copyWith(
+                                    fixedDays: int.tryParse(v) ?? 0,
+                                  );
+                                });
                               },
                             ),
                           ),
@@ -1190,15 +1315,37 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _saveHealthIndicators,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isDark
-                        ? AppColors.primaryPurple
-                        : const Color(0xFF2563EB),
-                    foregroundColor: Colors.white,
-                  ),
-                  child: Text(_isSaving ? 'Saving...' : 'Save Health Stats'),
+                child: Builder(
+                  builder: (context) {
+                    final saved =
+                        _booking?.healthSavedAt != null && !_healthDirty;
+                    return ElevatedButton.icon(
+                      onPressed: _isSaving || saved
+                          ? null
+                          : _saveHealthIndicators,
+                      icon: saved
+                          ? const Icon(Icons.check_circle_rounded)
+                          : const SizedBox.shrink(),
+                      label: Text(
+                        _isSaving
+                            ? 'Saving...'
+                            : saved
+                            ? 'Health Stats Saved'
+                            : 'Save Health Stats',
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: saved
+                            ? AppColors.success.withValues(alpha: 0.15)
+                            : null,
+                        disabledForegroundColor: saved
+                            ? AppColors.success
+                            : null,
+                        minimumSize: const Size(0, 48),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -1219,10 +1366,356 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     return '$day/$month/$year';
   }
 
+  // ---------------------------------------------------------------------------
+  // Overview tab — card layout (header tile + content), purple accent.
+  // ---------------------------------------------------------------------------
+
+  static const Color _accent = Color(0xFF7C3AED);
+
+  /// Bottom space on every tab so the last button (Save / Submit) can scroll
+  /// clear of the floating chat button (56 + 16 margin + gap).
+  static const double _fabClearance = 104;
+
+  Color _accentFor(bool isDark) => isDark ? AppColors.primaryPurple : _accent;
+
+  String _formatOrderDate(String raw) {
+    final d = DateTime.tryParse(raw)?.toLocal();
+    if (d == null) return raw;
+    return DateFormat('dd MMM yyyy, hh:mm a').format(d);
+  }
+
+  /// Tab with icon + label; locked tabs are dimmed (tap shows why).
+  Widget _iconTab(IconData icon, String label, {bool locked = false}) {
+    return Tab(
+      height: 48,
+      child: Opacity(
+        opacity: locked ? 0.45 : 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(locked ? Icons.lock_outline_rounded : icon, size: 20),
+              const SizedBox(width: 8),
+              Text(label),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---- Billing (mirrors web BillUploadPanel) ----
+
+  bool _pickupDropLoading = false;
+  String? _pickupDropRefKey;
+
+  /// Web auto-fills Pickup/Drop from the vehicle price list (brand + model);
+  /// falls back to the booking's stored price. Looked up once per vehicle.
+  Future<void> _loadPickupDropFromReference(BookingDetail b) async {
+    final make = b.vehicleMake, model = b.vehicleModel;
+    if (make == null || model == null) return;
+    final key = '$make|$model|${b.vehicleVariant ?? ''}|${b.vehicleFuel ?? ''}';
+    if (key == _pickupDropRefKey) return;
+    _pickupDropRefKey = key;
+    if (mounted) setState(() => _pickupDropLoading = true);
+    final ref = await _vehicleService.searchReference(
+      make: make,
+      model: model,
+      variant: b.vehicleVariant,
+      fuelType: b.vehicleFuel,
+    );
+    if (!mounted) return;
+    final fromRef = num.tryParse('${ref?['pickup_drop_price'] ?? ''}');
+    setState(() {
+      _pickupDropLoading = false;
+      final price = (fromRef != null && fromRef >= 0)
+          ? fromRef
+          : _pickupDropFor(b);
+      _pickupDropPriceController.text = _amountText(price);
+    });
+  }
+
+  String _amountText(num v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+  /// Parts already on the booking: billing.partsTotal, else sum of parts.
+  num _recordedPartsTotal(BookingDetail b) {
+    final fromBilling = b.billing?.partsTotal ?? 0;
+    if (fromBilling > 0) return fromBilling;
+    return b.parts.fold<num>(0, (acc, p) => acc + p.price * p.quantity);
+  }
+
+  num _pickupDropFor(BookingDetail b) {
+    final fromBilling = b.billing?.pickupDropPrice ?? 0;
+    if (fromBilling > 0) return fromBilling;
+    return b.pickupDropPrice ?? 0;
+  }
+
+  /// Base service amount = booking total minus everything else already on
+  /// it (web's getBaseServiceAmount fallback).
+  num _baseServiceAmount(BookingDetail b) {
+    final total = b.totalAmount ?? 0;
+    final rest =
+        _recordedPartsTotal(b) +
+        (b.billing?.labourCost ?? 0) +
+        (b.billing?.gst ?? 0) +
+        _pickupDropFor(b);
+    return (total - rest).clamp(0, double.infinity);
+  }
+
+  num _billingTotal() {
+    num n(TextEditingController c) => num.tryParse(c.text) ?? 0;
+    return _baseServiceAmount(_booking!) +
+        n(_partsCostController) +
+        n(_labourCostController) +
+        n(_gstController) +
+        n(_pickupDropPriceController);
+  }
+
+  /// Same rules as web; returns an error message or null.
+  String? _validateBilling() {
+    final invoice = _invoiceNumberController.text.trim();
+    if (invoice.isEmpty) return 'Invoice Number is required';
+    if (!RegExp(r'^[A-Za-z0-9]+$').hasMatch(invoice)) {
+      return 'Invoice Number must contain only letters and digits (no special characters)';
+    }
+    if (invoice.length > 20) {
+      return 'Invoice Number cannot exceed 20 characters';
+    }
+    final date = _selectedInvoiceDate;
+    if (date == null) return 'Please enter a valid invoice date';
+    final now = DateTime.now();
+    if (DateTime(
+      date.year,
+      date.month,
+      date.day,
+    ).isAfter(DateTime(now.year, now.month, now.day))) {
+      return 'Invoice date cannot be a future date';
+    }
+    for (final (label, c) in [
+      ('Parts Cost', _partsCostController),
+      ('Labour Cost', _labourCostController),
+      ('GST', _gstController),
+    ]) {
+      final t = c.text.trim();
+      if (t.isEmpty) continue;
+      if (!RegExp(r'^\d+$').hasMatch(t)) {
+        return '$label must contain only digits';
+      }
+      if (t.length > 6) return '$label cannot exceed 6 digits';
+    }
+    return null;
+  }
+
+  /// Card surface shared by every tab (same as the Overview cards).
+  BoxDecoration _cardDecoration(bool isDark) {
+    final accent = _accentFor(isDark);
+    return BoxDecoration(
+      color: isDark ? AppColors.backgroundSecondary : Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(
+        color: isDark ? AppColors.borderColor : const Color(0xFFEDE9FE),
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: isDark
+              ? Colors.black.withValues(alpha: 0.3)
+              : accent.withValues(alpha: 0.06),
+          blurRadius: 16,
+          offset: const Offset(0, 6),
+        ),
+      ],
+    );
+  }
+
+  /// Section heading for every tab: purple icon tile + title (Overview style).
+  Widget _sectionTitle(IconData icon, String title) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _accentFor(isDark);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: accent.withValues(alpha: isDark ? 0.18 : 0.1),
+          ),
+          child: Icon(icon, color: accent, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: isDark ? Colors.white : const Color(0xFF111827),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _overviewCard({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+    required Widget child,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _accentFor(isDark);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.backgroundSecondary : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDark ? AppColors.borderColor : const Color(0xFFEDE9FE),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.3)
+                : accent.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent.withValues(alpha: isDark ? 0.18 : 0.1),
+                ),
+                child: Icon(icon, color: accent, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? Colors.white : const Color(0xFF111827),
+                      ),
+                    ),
+                    if (subtitle != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: isDark
+                                ? Colors.grey[400]
+                                : const Color(0xFF6B7280),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+
+  /// Tinted pill — static label, or a button when [onTap] is set.
+  Widget _overviewPill({
+    required String label,
+    IconData? icon,
+    Color? color,
+    VoidCallback? onTap,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final c = color ?? _accentFor(isDark);
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 16, color: c),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: c,
+            ),
+          ),
+        ],
+      ),
+    );
+    return Material(
+      color: c.withValues(alpha: isDark ? 0.18 : 0.1),
+      borderRadius: BorderRadius.circular(12),
+      child: onTap == null
+          ? content
+          : InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onTap,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Center(widthFactor: 1, child: content),
+              ),
+            ),
+    );
+  }
+
+  Widget _overviewField(String label, String value) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: isDark ? Colors.white : const Color(0xFF111827),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildOverview() {
     final bool isBattery = _booking!.batteryTire?.isBatteryTireService == true;
     final bool isCarWash = _booking!.carWash?.isCarWashService == true;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _accentFor(isDark);
+    final booking = _booking!;
 
     List<String> flow = [
       'CREATED',
@@ -1258,406 +1751,389 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       ];
     }
 
-    final int currentIndex = flow.indexOf(_booking!.status.toUpperCase());
+    final int currentIndex = flow.indexOf(booking.status.toUpperCase());
+    final statusLabel = BookingDetail.getStatusLabel(
+      booking.status,
+      services: booking.services,
+    );
+    final muted = isDark ? AppColors.borderColor : const Color(0xFFE5E7EB);
+
+    final hasCoords =
+        booking.location?.lat != null && booking.location?.lng != null;
+    final phone = booking.user?.phone;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, _fabClearance),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Status & Workflow Timeline
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.backgroundSecondary : Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? AppColors.borderColor : const Color(0xFFE5E7EB),
+          // Order Status & Workflow
+          _overviewCard(
+            icon: Icons.show_chart_rounded,
+            title: 'Order Status & Workflow',
+            subtitle: 'Track the progress of this order',
+            trailing: currentIndex >= 0
+                ? _overviewPill(
+                    label: 'Step ${currentIndex + 1}/${flow.length}',
+                  )
+                : null,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: flow.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final isDone = index <= currentIndex;
+                  final isActive = index == currentIndex;
+                  final isLast = index == flow.length - 1;
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 88,
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: isDone
+                                    ? accent
+                                    : (isDark
+                                          ? AppColors.backgroundSurface
+                                          : const Color(0xFFF3F4F6)),
+                                border: isActive
+                                    ? Border.all(
+                                        color: accent.withValues(alpha: 0.25),
+                                        width: 4,
+                                      )
+                                    : null,
+                              ),
+                              child: Center(
+                                child: isDone
+                                    ? const Icon(
+                                        Icons.check_rounded,
+                                        size: 20,
+                                        color: Colors.white,
+                                      )
+                                    : Text(
+                                        '${index + 1}',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFF9CA3AF),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              BookingDetail.getStatusLabel(
+                                entry.value,
+                                services: booking.services,
+                              ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.3,
+                                fontWeight: isDone
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: isDone
+                                    ? (isDark
+                                          ? Colors.white
+                                          : const Color(0xFF111827))
+                                    : const Color(0xFF9CA3AF),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!isLast)
+                        Container(
+                          width: 28,
+                          height: 3,
+                          margin: const EdgeInsets.only(top: 18.5),
+                          decoration: BoxDecoration(
+                            color: index < currentIndex ? accent : muted,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                    ],
+                  );
+                }).toList(),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: isDark
-                      ? Colors.black.withValues(alpha: 0.3)
-                      : Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+            ),
+          ),
+
+          if (booking.status == 'SERVICE_COMPLETED' &&
+              (booking.paymentStatus ?? '').toLowerCase() != 'paid')
+            _overviewBanner(
+              icon: Icons.info_outline_rounded,
+              color: AppColors.warning,
+              title: 'Waiting for customer payment',
+              message:
+                  '₹${(booking.totalAmount ?? 0).toStringAsFixed(0)} due. Cannot move to Out For Delivery yet.',
+            ),
+          if (booking.revisit?.isRevisit == true)
+            _overviewBanner(
+              icon: Icons.warning_amber_rounded,
+              color: AppColors.error,
+              title: 'Revisit Order',
+              message: booking.revisit?.reason ?? 'No reason provided',
+            ),
+          if (booking.delay?.isDelayed == true)
+            _overviewBanner(
+              icon: Icons.pause_circle_filled_rounded,
+              color: AppColors.warning,
+              title: 'Order On Hold',
+              message: [
+                booking.delay?.reason ?? 'No reason provided',
+                if ((booking.delay?.note ?? '').isNotEmpty)
+                  booking.delay!.note!,
+              ].join('\n'),
+            ),
+
+          // Live Staff Location — not needed once the order is finished.
+          if (!const {
+            'DELIVERED',
+            'COMPLETED',
+            'CANCELLED',
+          }.contains(booking.status.toUpperCase()))
+            _overviewCard(
+              icon: Icons.location_on_rounded,
+              title: 'Live Staff Location',
+              trailing: _overviewPill(
+                label: statusLabel,
+                icon: Icons.check_circle_rounded,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                // Road route from the staff member's live position to where
+                // they're heading (same destination rule as the staff app).
+                child: SizedBox(
+                  height: 260,
+                  child: OrderRouteMap(
+                    originLat: _staffLat,
+                    originLng: _staffLng,
+                    destLat: _routeDestination(booking)?.lat,
+                    destLng: _routeDestination(booking)?.lng,
+                  ),
                 ),
-              ],
+              ),
+            ),
+
+          // Vehicle Details
+          _overviewCard(
+            icon: Icons.directions_car_rounded,
+            title: 'Vehicle Details',
+            trailing: _overviewPill(
+              label: statusLabel,
+              icon: Icons.check_circle_rounded,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(
-                      Icons.show_chart,
-                      size: 20,
-                      color: isDark
-                          ? AppColors.primaryPurple
-                          : const Color(0xFF7C3AED),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Status & Workflow',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : Colors.black,
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Container(
+                        width: 96,
+                        height: 72,
+                        color: accent.withValues(alpha: isDark ? 0.18 : 0.08),
+                        child: booking.vehicleImage != null
+                            ? ViewableImage(
+                                url: booking.vehicleImage!,
+                                child: CachedNetworkImage(
+                                  imageUrl: booking.vehicleImage!,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (_, _, _) => Icon(
+                                    Icons.directions_car_rounded,
+                                    color: accent,
+                                    size: 36,
+                                  ),
+                                ),
+                              )
+                            : Icon(
+                                Icons.directions_car_rounded,
+                                color: accent,
+                                size: 36,
+                              ),
                       ),
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? AppColors.backgroundSurface
-                            : const Color(0xFFF3F4F6),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'STEP ${currentIndex + 1}/${flow.length}',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: isDark
-                              ? Colors.grey[400]
-                              : const Color(0xFF6B7280),
-                        ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _overviewField(
+                        'Vehicle',
+                        [
+                          booking.vehicleName ?? 'N/A',
+                          if (booking.vehicleVariant != null)
+                            booking.vehicleVariant!,
+                        ].join(' · '),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: flow.asMap().entries.map((entry) {
-                      final int index = entry.key;
-                      final String status = entry.value;
-                      final bool isCompleted = index <= currentIndex;
-                      final bool isActive = index == currentIndex;
-                      final bool isLast = index == flow.length - 1;
-
-                      return Row(
-                        children: [
-                          Column(
-                            children: [
-                              Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: isCompleted
-                                      ? const Color(0xFF10B981)
-                                      : (isActive
-                                            ? (isDark
-                                                  ? AppColors.primaryPurple
-                                                  : const Color(0xFF7C3AED))
-                                            : (isDark
-                                                  ? AppColors.backgroundSurface
-                                                  : const Color(0xFFF3F4F6))),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: isActive
-                                        ? (isDark
-                                                  ? AppColors.primaryPurple
-                                                  : const Color(0xFF7C3AED))
-                                              .withValues(alpha: 0.2)
-                                        : Colors.transparent,
-                                    width: 4,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: isCompleted
-                                      ? const Icon(
-                                          Icons.check,
-                                          size: 16,
-                                          color: Colors.white,
-                                        )
-                                      : Text(
-                                          '${index + 1}',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: isActive
-                                                ? Colors.white
-                                                : const Color(0xFF9CA3AF),
-                                          ),
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: 80,
-                                child: Text(
-                                  BookingDetail.getStatusLabel(
-                                    status,
-                                    services: _booking?.services,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: isActive
-                                        ? FontWeight.bold
-                                        : FontWeight.w500,
-                                    color: isCompleted || isActive
-                                        ? (isDark
-                                              ? Colors.white
-                                              : const Color(0xFF111827))
-                                        : const Color(0xFF9CA3AF),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (!isLast)
-                            Container(
-                              width: 40,
-                              height: 2,
-                              margin: const EdgeInsets.only(bottom: 24),
-                              color: isCompleted
-                                  ? const Color(0xFF10B981)
-                                  : (isDark
-                                        ? AppColors.borderColor
-                                        : const Color(0xFFE5E7EB)),
-                            ),
-                        ],
-                      );
-                    }).toList(),
-                  ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _overviewField('Type', booking.vehicleType ?? '—'),
+                    ),
+                    Expanded(
+                      child: _overviewField(
+                        'Color',
+                        booking.vehicleColor ?? '—',
+                      ),
+                    ),
+                    Expanded(
+                      child: _overviewField(
+                        'Fuel Type',
+                        booking.vehicleFuel ?? '—',
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 24),
 
-          if (_booking!.status == 'SERVICE_COMPLETED' &&
-              (_booking!.paymentStatus ?? '').toLowerCase() != 'paid')
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF78350F).withValues(alpha: 0.25)
-                    : const Color(0xFFFFFBEB),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark
-                      ? const Color(0xFFF59E0B).withValues(alpha: 0.35)
-                      : const Color(0xFFFDE68A),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 18,
-                    color: isDark
-                        ? const Color(0xFFFCD34D)
-                        : const Color(0xFFB45309),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Waiting for customer payment (₹${(_booking!.totalAmount ?? 0).toStringAsFixed(0)}). Cannot move to Out For Delivery.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark
-                            ? const Color(0xFFFDE68A)
-                            : const Color(0xFF92400E),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          _buildInfoCard(
-            title: 'Live Staff Location',
-            icon: Icons.my_location,
-            children: [
-              MerchantStaffLiveMap(lat: _staffLat, lng: _staffLng),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          if (_booking!.revisit?.isRevisit == true)
-            Container(
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.red.withValues(alpha: 0.1)
-                    : Colors.red[50],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.red.withValues(alpha: 0.2)
-                      : Colors.red[100]!,
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning_amber_rounded, color: Colors.red),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Revisit Order',
-                          style: TextStyle(
-                            color: Colors.red,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          _booking!.revisit?.reason ?? 'No reason provided',
-                          style: TextStyle(
-                            color: isDark ? Colors.red[300] : Colors.red[700],
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (_booking!.delay?.isDelayed == true)
-            Container(
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.orange.withValues(alpha: 0.1)
-                    : Colors.orange[50],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.orange.withValues(alpha: 0.2)
-                      : Colors.orange[100]!,
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.pause_circle_filled, color: Colors.orange),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Order On Hold',
-                          style: TextStyle(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          _booking!.delay?.reason ?? 'No reason provided',
-                          style: TextStyle(
-                            color: isDark
-                                ? Colors.orange[300]
-                                : Colors.orange[700],
-                            fontSize: 12,
-                          ),
-                        ),
-                        if (_booking!.delay?.note != null &&
-                            _booking!.delay!.note!.isNotEmpty)
-                          Text(
-                            _booking!.delay!.note!,
-                            style: TextStyle(
-                              color: isDark
-                                  ? Colors.orange[200]
-                                  : Colors.orange[600],
-                              fontSize: 11,
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          _buildInfoCard(
-            title: 'Vehicle Details',
-            icon: Icons.directions_car,
-            children: [
-              _buildInfoRow('Vehicle', _booking!.vehicleName ?? 'N/A'),
-              _buildInfoRow(
-                'Status',
-                BookingDetail.getStatusLabel(
-                  _booking!.status,
-                  services: _booking?.services,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildInfoCard(
+          // Customer Details
+          _overviewCard(
+            icon: Icons.person_rounded,
             title: 'Customer Details',
-            icon: Icons.person,
-            children: [
-              _buildInfoRow('Name', _booking!.user?.name ?? 'Guest'),
-              _buildInfoRow('Phone', _booking!.user?.phone ?? 'N/A'),
-            ],
+            trailing: (phone != null && phone.isNotEmpty)
+                ? _overviewPill(
+                    label: 'Call',
+                    icon: Icons.call_rounded,
+                    onTap: () => launchUrl(Uri(scheme: 'tel', path: phone)),
+                  )
+                : null,
+            child: Row(
+              children: [
+                Expanded(
+                  child: _overviewField('Name', booking.user?.name ?? 'Guest'),
+                ),
+                Expanded(child: _overviewField('Phone', phone ?? 'N/A')),
+              ],
+            ),
           ),
-          if (_booking!.notes != null && _booking!.notes!.isNotEmpty)
-            _buildInfoCard(
-              title: 'Customer Notes',
-              icon: Icons.note,
+
+          // Service Location
+          _overviewCard(
+            icon: Icons.place_rounded,
+            title: 'Service Location',
+            trailing: hasCoords
+                ? _overviewPill(
+                    label: 'Get Directions',
+                    icon: Icons.near_me_rounded,
+                    onTap: () {
+                      final lat = booking.location!.lat!;
+                      final lng = booking.location!.lng!;
+                      launchUrl(
+                        Uri.parse('google.navigation:q=$lat,$lng'),
+                        mode: LaunchMode.externalApplication,
+                      );
+                    },
+                  )
+                : null,
+            child: _overviewTintedRow(
+              Icons.apartment_rounded,
+              booking.location?.address ?? 'No address provided',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Customer address until the vehicle is picked up, then the workshop.
+  BookingLocation? _routeDestination(BookingDetail booking) {
+    const atWorkshop = {
+      'VEHICLE_PICKED',
+      'REACHED_MERCHANT',
+      'VEHICLE_AT_MERCHANT',
+      'SERVICE_STARTED',
+      'SERVICE_COMPLETED',
+    };
+    if (atWorkshop.contains(booking.status.toUpperCase())) {
+      return booking.merchantLocation ?? booking.location;
+    }
+    return booking.location;
+  }
+
+  Widget _overviewTintedRow(IconData icon, String text) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _accentFor(isDark);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: isDark ? 0.12 : 0.05),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: accent),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.45,
+                color: isDark ? Colors.grey[300] : const Color(0xFF374151),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _overviewBanner({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String message,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.14 : 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _booking!.notes!,
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message,
                   style: TextStyle(
-                    fontSize: 14,
-                    color: isDark ? Colors.grey[300] : Colors.black87,
+                    fontSize: 13,
+                    color: isDark ? Colors.grey[300] : const Color(0xFF374151),
                   ),
                 ),
               ],
             ),
-          _buildInfoCard(
-            title: 'Location',
-            icon: Icons.location_on,
-            children: [
-              Text(
-                _booking!.location?.address ?? 'No address provided',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: isDark ? Colors.grey[300] : Colors.black87,
-                ),
-              ),
-              if (_booking!.location?.lat != null &&
-                  _booking!.location?.lng != null) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      final lat = _booking!.location!.lat!;
-                      final lng = _booking!.location!.lng!;
-                      final uri = Uri.parse("google.navigation:q=$lat,$lng");
-                      launchUrl(uri, mode: LaunchMode.externalApplication);
-                    },
-                    icon: const Icon(Icons.directions),
-                    label: const Text('Get Directions'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue[700],
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
           ),
         ],
       ),
@@ -1670,7 +2146,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, _fabClearance),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1698,19 +2174,9 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
               children: [
                 Row(
                   children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      size: 20,
-                      color: Color(0xFFD97706),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
+                    _sectionTitle(
+                      Icons.assignment_rounded,
                       'Vehicle Inspection',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : Colors.black,
-                      ),
                     ),
                     const Spacer(),
                     if (isCompleted)
@@ -1956,9 +2422,12 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: CachedNetworkImage(
-                            imageUrl: url,
-                            fit: BoxFit.cover,
+                          child: ViewableImage(
+                            url: url,
+                            child: CachedNetworkImage(
+                              imageUrl: url,
+                              fit: BoxFit.cover,
+                            ),
                           ),
                         ),
                         if (!isCompleted)
@@ -2010,27 +2479,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
   }
 
   Future<String?> _showImageSourceSheet() async {
-    final ImageSource? source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Camera'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Gallery'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-          ],
-        ),
-      ),
-    );
-
+    final source = await chooseImageSource(context);
     if (source != null) {
       return _pickAndUploadImage(source);
     }
@@ -2045,9 +2494,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
           _backPhoto == null ||
           _leftPhoto == null ||
           _rightPhoto == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please upload all 4 sides of photos')),
-        );
+        StatusFeedback.auto('Please upload all 4 sides of photos');
         return;
       }
     }
@@ -2076,19 +2523,13 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       await _load(_booking!.id);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isFinal ? 'Inspection completed' : 'Inspection saved as draft',
-            ),
-          ),
+        StatusFeedback.auto(
+          isFinal ? 'Inspection completed' : 'Inspection saved as draft',
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save inspection')),
-        );
+        StatusFeedback.auto('Failed to save inspection');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -2102,27 +2543,19 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
     if (_booking == null || amountText.isEmpty || reasonText.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Amount and reason are required')),
-        );
+        StatusFeedback.auto('Amount and reason are required');
       }
       return;
     }
     if (amount == null || amount <= 0) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a valid amount greater than 0')),
-        );
+        StatusFeedback.auto('Enter a valid amount greater than 0');
       }
       return;
     }
     if (reasonText.length < 5) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Reason should be at least 5 characters'),
-          ),
-        );
+        StatusFeedback.auto('Reason should be at least 5 characters');
       }
       return;
     }
@@ -2137,15 +2570,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       _extraCostAmountController.clear();
       _extraCostReasonController.clear();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Extra cost approval requested')),
-        );
+        StatusFeedback.auto('Extra cost approval requested');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to request approval')),
-        );
+        StatusFeedback.auto('Failed to request approval');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -2162,14 +2591,10 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
         status == 'COMPLETED' ||
         _booking!.paymentStatus == 'paid';
 
-    final approvedInspectionParts =
-        _booking!.inspection?.additionalParts
-            .where((part) => part.approvalStatus == 'Approved' || part.approved)
-            .toList() ??
-        [];
+    final approvedInspectionParts = _approvedInspectionParts(_booking!);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, _fabClearance),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2187,67 +2612,74 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
           // 3. After Service Photos
           _buildAfterServicePhotosSection(execution, isReadOnly),
 
-          const SizedBox(height: 24),
-
-          _buildExtraCostSection(isReadOnly),
-
+          // "Request Extra Cost Approval" removed from the app; extra parts
+          // go through inspection approval instead.
           const SizedBox(height: 32),
 
           // 5. Save Button
           if (!isReadOnly)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _isSaving ? null : _saveServiceData,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryPurple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            Builder(
+              builder: (context) {
+                // Already saved and nothing new since → show as done; it
+                // becomes active again as soon as a part/photo is added.
+                final savedAndClean =
+                    _hasServiceDataSaved(_booking!) &&
+                    _newServiceParts.isEmpty &&
+                    _newAfterPhotos.isEmpty;
+                return SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isSaving || savedAndClean
+                        ? null
+                        : _saveServiceData,
+                    icon: savedAndClean
+                        ? const Icon(Icons.check_circle_rounded)
+                        : const SizedBox.shrink(),
+                    label: Text(
+                      _isSaving
+                          ? 'Saving...'
+                          : savedAndClean
+                          ? 'Service Data Saved'
+                          : 'Save Service Data',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: savedAndClean
+                          ? AppColors.success.withValues(alpha: 0.15)
+                          : null,
+                      disabledForegroundColor: savedAndClean
+                          ? AppColors.success
+                          : null,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
-                ),
-                child: Text(_isSaving ? 'Saving...' : 'Save Service Data'),
-              ),
+                );
+              },
             ),
         ],
       ),
     );
   }
 
-  Widget _buildApprovedInspectionPartsSection(List<AdditionalPart> parts) {
+  Widget _buildApprovedInspectionPartsSection(
+    List<MapEntry<int, AdditionalPart>> parts,
+  ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF166534).withValues(alpha: 0.1)
-            : const Color(0xFFF0FDF4),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark
-              ? const Color(0xFF166534).withValues(alpha: 0.3)
-              : const Color(0xFFBBF7D0),
-        ),
-      ),
+      decoration: _cardDecoration(isDark),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.check_circle,
-                color: Color(0xFF16A34A),
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Text(
+              _sectionTitle(
+                Icons.fact_check_rounded,
                 'Approved Inspection Parts',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: isDark ? Colors.green[300] : const Color(0xFF166534),
-                ),
               ),
             ],
           ),
@@ -2260,10 +2692,10 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
             ),
           ),
           const SizedBox(height: 16),
-          ...parts.asMap().entries.map((entry) {
-            final index = entry.key;
+          ...parts.map((entry) {
             final part = entry.value;
-            final inspectionPartId = 'inspection_$index';
+            // Index in the full additionalParts list — same id as the web.
+            final inspectionPartId = 'inspection_${entry.key}';
             final alreadySent = _sentInspectionPartIds.contains(
               inspectionPartId,
             );
@@ -2285,11 +2717,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                   if (part.image != null)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: part.image!,
-                        width: 50,
-                        height: 50,
-                        fit: BoxFit.cover,
+                      child: ViewableImage(
+                        url: part.image!,
+                        child: CachedNetworkImage(
+                          imageUrl: part.image!,
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     )
                   else
@@ -2361,27 +2796,44 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
+  /// Approved inspection parts keyed by their index in the full
+  /// additionalParts list (matches the web's `inspection_<originalIndex>`).
+  List<MapEntry<int, AdditionalPart>> _approvedInspectionParts(
+    BookingDetail booking,
+  ) {
+    final all = booking.inspection?.additionalParts ?? const [];
+    return [
+      for (var i = 0; i < all.length; i++)
+        if (all[i].approvalStatus?.toLowerCase() == 'approved' ||
+            all[i].approved)
+          MapEntry(i, all[i]),
+    ];
+  }
+
+  Map<String, dynamic> _servicePartFromInspection(
+    AdditionalPart part,
+    String id,
+  ) => {
+    'name': part.name,
+    'price': part.price,
+    'quantity': part.quantity,
+    'oldImage': part.image,
+    'fromInspection': true,
+    'inspectionPartId': id,
+    'approved': true,
+    'approvalStatus': 'Approved',
+    'needsNewImage': true,
+  };
+
   void _sendInspectionPartToService(AdditionalPart part, String id) {
     if (_sentInspectionPartIds.contains(id)) return;
 
     setState(() {
-      _newServiceParts.add({
-        'name': part.name,
-        'price': part.price,
-        'quantity': part.quantity,
-        'oldImage': part.image,
-        'fromInspection': true,
-        'inspectionPartId': id,
-        'approved': true,
-        'approvalStatus': 'Approved',
-        'needsNewImage': true,
-      });
+      _newServiceParts.add(_servicePartFromInspection(part, id));
       _sentInspectionPartIds.add(id);
     });
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('${part.name} sent to service')));
+    StatusFeedback.auto('${part.name} sent to service');
   }
 
   Widget _buildServicePartsSection(
@@ -2393,38 +2845,16 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.backgroundSurface : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.1)
-              : const Color(0xFFE5E7EB),
-        ),
-      ),
+      decoration: _cardDecoration(isDark),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Service Parts',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: isDark ? Colors.white : Colors.black,
-                ),
-              ),
-              if (!isReadOnly)
-                TextButton.icon(
-                  onPressed: _addNewDiscovery,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('New Discovery'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppColors.primaryPurple,
-                  ),
-                ),
+              _sectionTitle(Icons.build_rounded, 'Service Parts'),
+              // "New Discovery" hidden — new parts go through inspection
+              // approval instead. _addNewDiscovery kept for re-enabling.
             ],
           ),
           const SizedBox(height: 16),
@@ -2521,7 +2951,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                         fontWeight: FontWeight.bold,
                         color: part.fromInspection == true
                             ? Colors.green
-                            : Colors.blue,
+                            : _accent,
                       ),
                     ),
                   ],
@@ -2561,11 +2991,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: part.oldImage!,
-                          height: 80,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
+                        child: ViewableImage(
+                          url: part.oldImage!,
+                          child: CachedNetworkImage(
+                            imageUrl: part.oldImage!,
+                            height: 80,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
                         ),
                       ),
                       Text(
@@ -2585,11 +3018,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: part.image!,
-                          height: 80,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
+                        child: ViewableImage(
+                          url: part.image!,
+                          child: CachedNetworkImage(
+                            imageUrl: part.image!,
+                            height: 80,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
                         ),
                       ),
                       Text(
@@ -2738,11 +3174,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: part['oldImage'] is String
-                            ? CachedNetworkImage(
-                                imageUrl: part['oldImage'],
-                                height: 80,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
+                            ? ViewableImage(
+                                url: part['oldImage'],
+                                child: CachedNetworkImage(
+                                  imageUrl: part['oldImage'],
+                                  height: 80,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
                               )
                             : (part['oldImage'] is XFile
                                   ? (kIsWeb
@@ -2776,11 +3215,12 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
               Expanded(
                 child: InkWell(
                   onTap: () async {
-                    final XFile? file = await _pickImageFileSafely(
-                      ImageSource.gallery,
-                    );
+                    final source = await chooseImageSource(context);
+                    if (source == null) return;
+                    final XFile? file = await _pickImageFileSafely(source);
                     if (file != null) {
                       setState(() => part['image'] = file);
+                      await _autoSavePartImage(part);
                     }
                   },
                   child: Container(
@@ -2837,6 +3277,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
+  // ignore: unused_element — button hidden for now, kept for re-enabling.
   void _addNewDiscovery() {
     setState(() {
       _newServiceParts.add({
@@ -2861,28 +3302,16 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.backgroundSurface : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.1)
-              : const Color(0xFFE5E7EB),
-        ),
-      ),
+      decoration: _cardDecoration(isDark),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
+              _sectionTitle(
+                Icons.photo_library_rounded,
                 'After Service Photos',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: isDark ? Colors.white : Colors.black,
-                ),
               ),
               Text(
                 '$totalPhotos/4 Photos',
@@ -2899,14 +3328,16 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
-                ...existingAfter.map((url) => _buildPhotoItem(url)),
+                ...existingAfter.map(
+                  (url) => _buildPhotoItem(url, gallery: existingAfter),
+                ),
                 ..._newAfterPhotos.map((file) => _buildFilePhotoItem(file)),
                 if (!isReadOnly && totalPhotos < 4)
                   InkWell(
                     onTap: () async {
-                      final XFile? file = await _pickImageFileSafely(
-                        ImageSource.gallery,
-                      );
+                      final source = await chooseImageSource(context);
+                      if (source == null) return;
+                      final XFile? file = await _pickImageFileSafely(source);
                       if (file != null) {
                         setState(() => _newAfterPhotos.add(file));
                       }
@@ -2938,16 +3369,20 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
-  Widget _buildPhotoItem(String url) {
+  Widget _buildPhotoItem(String url, {List<String>? gallery}) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: CachedNetworkImage(
-          imageUrl: url,
-          width: 100,
-          height: 100,
-          fit: BoxFit.cover,
+        child: ViewableImage(
+          url: url,
+          gallery: gallery,
+          child: CachedNetworkImage(
+            imageUrl: url,
+            width: 100,
+            height: 100,
+            fit: BoxFit.cover,
+          ),
         ),
       ),
     );
@@ -2997,6 +3432,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
+  // ignore: unused_element — section hidden for now, kept for re-enabling.
   Widget _buildExtraCostSection(bool isReadOnly) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
@@ -3106,6 +3542,64 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
+  // Auto-save: upload a part's after image and persist the part right away,
+  // so leaving/reloading the screen doesn't lose it (parity with web).
+  Future<void> _autoSavePartImage(Map<String, dynamic> part) async {
+    if (_booking == null) return;
+    final name = (part['name'] ?? '').toString().trim();
+    final price = num.tryParse('${part['price']}') ?? 0;
+    final qty = num.tryParse('${part['quantity']}') ?? 0;
+    // Incomplete part: keep the file locally until Save Service Data.
+    if (name.isEmpty || price <= 0 || qty <= 0) return;
+
+    setState(() => _isSaving = true);
+    try {
+      final uploaded = await _service.uploadFiles([part['image']]);
+      if (uploaded.isEmpty) throw Exception('Upload failed');
+
+      final existingExecution = _booking!.serviceExecution;
+      await _service.updateBookingDetails(_booking!.id, {
+        'serviceExecution': {
+          if (existingExecution != null) ...{
+            'jobStartTime': existingExecution.jobStartTime,
+            'jobEndTime': existingExecution.jobEndTime,
+            'beforePhotos': existingExecution.beforePhotos,
+            'duringPhotos': existingExecution.duringPhotos,
+          },
+          'afterPhotos': existingExecution?.afterPhotos ?? [],
+          'serviceParts': [
+            ...existingExecution?.serviceParts.map((p) => p.toJson()) ?? [],
+            {
+              'name': part['name'],
+              'price': part['price'],
+              'quantity': part['quantity'],
+              'image': uploaded.first,
+              'oldImage': part['oldImage'],
+              'approved': part['approved'],
+              'approvalStatus': part['approvalStatus'],
+              'addedDuringService': part['addedDuringService'],
+              'fromInspection': part['fromInspection'],
+              'inspectionPartId': part['inspectionPartId'],
+            },
+          ],
+        },
+      });
+
+      setState(() => _newServiceParts.remove(part));
+      await _load(_booking!.id);
+      if (mounted) {
+        StatusFeedback.auto('After image saved for $name');
+      }
+    } catch (e) {
+      debugPrint('Auto-save part image error: $e');
+      if (mounted) {
+        StatusFeedback.auto('Failed to save image');
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
   Future<void> _saveServiceData() async {
     if (_booking == null) return;
 
@@ -3159,9 +3653,10 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
       await _service.updateBookingDetails(_booking!.id, {
         'serviceExecution': {
+          // Marks service data as saved → unlocks QC Check.
+          'jobEndTime': DateTime.now().toUtc().toIso8601String(),
           if (existingExecution != null) ...{
             'jobStartTime': existingExecution.jobStartTime,
-            'jobEndTime': existingExecution.jobEndTime,
             'beforePhotos': existingExecution.beforePhotos,
             'duringPhotos': existingExecution.duringPhotos,
           },
@@ -3179,9 +3674,14 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       await _load(_booking!.id);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Service data updated successfully')),
-        );
+        StatusFeedback.success('Service data saved');
+        // Saved → go to QC Check (same as web), unless QC is already done.
+        final controller = _tabController;
+        if (controller != null &&
+            controller.length > 3 &&
+            _booking?.qc?.completedAt == null) {
+          controller.animateTo(3);
+        }
       }
     } catch (e) {
       debugPrint('Save error: $e');
@@ -3192,9 +3692,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
         } else if (e.toString().contains('413')) {
           msg = 'Files are too large. Please upload smaller images.';
         }
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(msg)));
+        StatusFeedback.auto(msg);
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -3207,18 +3705,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, _fabClearance),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Quality Check (QC)',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              color: isDark ? Colors.white : Colors.black,
-            ),
-          ),
+          _sectionTitle(Icons.verified_user_rounded, 'Quality Check (QC)'),
           const SizedBox(height: 16),
           _buildQCCheckbox(
             'Test Ride',
@@ -3333,9 +3824,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
         _noLeaksChecked &&
         _noErrorLightsChecked)) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please complete all QC checks')),
-        );
+        StatusFeedback.auto('Please complete all QC checks');
       }
       return;
     }
@@ -3353,15 +3842,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       });
       await _load(_booking!.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('QC completed successfully')),
-        );
+        StatusFeedback.auto('QC completed successfully');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Failed to complete QC')));
+        StatusFeedback.auto('Failed to complete QC');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -3372,23 +3857,30 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     final billing = _booking!.billing;
     final isUploaded = billing?.fileUrl != null;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // Bill is final once the service is completed / delivered / paid
+    // (merchant can't change status after completion either).
+    final billLocked =
+        (_booking!.paymentStatus ?? '').toLowerCase() == 'paid' ||
+        const {
+          'SERVICE_COMPLETED',
+          'OUT_FOR_DELIVERY',
+          'DELIVERED',
+          'COMPLETED',
+        }.contains(_booking!.status.toUpperCase());
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, _fabClearance),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Invoice Details',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              color: isDark ? Colors.white : Colors.black,
-            ),
-          ),
+          _sectionTitle(Icons.receipt_long_rounded, 'Invoice Details'),
           const SizedBox(height: 16),
           TextField(
             controller: _invoiceNumberController,
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
+              LengthLimitingTextInputFormatter(20),
+            ],
             style: TextStyle(color: isDark ? Colors.white : Colors.black),
             decoration: InputDecoration(
               labelText: 'Invoice Number',
@@ -3457,6 +3949,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 child: TextField(
                   controller: _partsCostController,
                   keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  onChanged: (_) => setState(() {}),
                   style: TextStyle(color: isDark ? Colors.white : Colors.black),
                   decoration: InputDecoration(
                     labelText: 'Parts Cost',
@@ -3482,6 +3979,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 child: TextField(
                   controller: _labourCostController,
                   keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  onChanged: (_) => setState(() {}),
                   style: TextStyle(color: isDark ? Colors.white : Colors.black),
                   decoration: InputDecoration(
                     labelText: 'Labour Cost',
@@ -3511,6 +4013,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 child: TextField(
                   controller: _gstController,
                   keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  onChanged: (_) => setState(() {}),
                   style: TextStyle(color: isDark ? Colors.white : Colors.black),
                   decoration: InputDecoration(
                     labelText: 'GST',
@@ -3540,6 +4047,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 child: TextField(
                   controller: _pickupDropPriceController,
                   keyboardType: TextInputType.number,
+                  readOnly: true,
+                  enabled: false,
                   style: TextStyle(color: isDark ? Colors.white : Colors.black),
                   decoration: InputDecoration(
                     labelText: 'Pickup/Drop Price',
@@ -3562,15 +4071,89 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          Text(
-            'Bill / Invoice File',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: isDark ? Colors.white : Colors.black,
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 4),
+            child: Row(
+              children: [
+                if (_pickupDropLoading) ...[
+                  const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    _pickupDropLoading
+                        ? 'Looking up price for this vehicle…'
+                        : 'Auto-filled from vehicle brand & model (not editable)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark
+                          ? Colors.grey[500]
+                          : const Color(0xFF6B7280),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(height: 16),
+          // Total Amount — read-only, live (base service + parts + labour +
+          // GST + pickup/drop), same as web.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: _accentFor(isDark).withValues(alpha: isDark ? 0.14 : 0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _accentFor(isDark).withValues(alpha: 0.25),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Total Amount',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isDark
+                              ? Colors.grey[400]
+                              : const Color(0xFF6B7280),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Includes base service ₹${_amountText(_baseServiceAmount(_booking!))}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark
+                              ? Colors.grey[500]
+                              : const Color(0xFF9CA3AF),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '₹${_amountText(_billingTotal())}',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : const Color(0xFF111827),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          _sectionTitle(Icons.upload_file_rounded, 'Bill / Invoice File'),
           const SizedBox(height: 8),
           if (isUploaded && _billFile == null)
             Column(
@@ -3579,37 +4162,41 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: isDark
-                        ? Colors.blue.withValues(alpha: 0.1)
-                        : Colors.blue[50],
+                        ? _accent.withValues(alpha: 0.1)
+                        : const Color(0xFFF5F3FF),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color: isDark
-                          ? Colors.blue.withValues(alpha: 0.2)
-                          : Colors.blue[100]!,
+                          ? _accent.withValues(alpha: 0.2)
+                          : const Color(0xFFEDE9FE),
                     ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.file_present, color: Colors.blue),
+                      const Icon(Icons.file_present, color: _accent),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           'Invoice document uploaded',
                           style: TextStyle(
-                            color: isDark ? Colors.blue[200] : Colors.blue[800],
+                            color: isDark
+                                ? const Color(0xFFDDD6FE)
+                                : const Color(0xFF5B21B6),
                           ),
                         ),
                       ),
-                      TextButton(
-                        onPressed: () => _pickBillFile(),
-                        child: const Text('Change'),
-                      ),
+                      if (!billLocked)
+                        TextButton(
+                          onPressed: () => _pickBillFile(),
+                          child: const Text('Change'),
+                        ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 8),
                 TextButton.icon(
-                  onPressed: () => launchUrl(Uri.parse(billing!.fileUrl!)),
+                  onPressed: () =>
+                      openDocumentInApp(context, billing!.fileUrl!),
                   icon: const Icon(Icons.visibility),
                   label: const Text('View Document'),
                   style: TextButton.styleFrom(
@@ -3659,23 +4246,60 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
               ),
             ),
           const SizedBox(height: 32),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isSaving ? null : _submitBilling,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          if (billLocked)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(
+                  alpha: isDark ? 0.14 : 0.08,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppColors.success.withValues(alpha: 0.3),
                 ),
               ),
-              child: Text(
-                _isSaving ? 'Submitting...' : 'Submit Bill & Complete Service',
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    color: AppColors.success,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Bill submitted and service completed. The bill can no longer be changed.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: isDark
+                            ? Colors.grey[300]
+                            : const Color(0xFF374151),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSaving ? null : _submitBilling,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  _isSaving
+                      ? 'Submitting...'
+                      : 'Submit Bill & Complete Service',
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -3689,9 +4313,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Please complete inspection first')),
-          );
+          StatusFeedback.auto('Please complete inspection first');
         }
       }
       return;
@@ -3700,20 +4322,22 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Please complete QC first')),
-          );
+          StatusFeedback.auto('Please complete QC first');
         }
       }
       return;
     }
+    final billingError = _validateBilling();
+    if (billingError != null) {
+      StatusFeedback.warning(billingError);
+      return;
+    }
+
     if (_billFile == null && _booking!.billing?.fileUrl == null) {
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Please upload invoice file')),
-          );
+          StatusFeedback.auto('Please upload invoice file');
         }
       }
       return;
@@ -3732,11 +4356,16 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       final gst = double.tryParse(_gstController.text) ?? 0.0;
       final pickupDropPrice =
           double.tryParse(_pickupDropPriceController.text) ?? 0.0;
-      final total = partsCost + labourCost + gst + pickupDropPrice;
+      final total =
+          _baseServiceAmount(_booking!) +
+          partsCost +
+          labourCost +
+          gst +
+          pickupDropPrice;
 
       await _service.updateBookingDetails(_booking!.id, {
         'billing': {
-          'invoiceNumber': _invoiceNumberController.text,
+          'invoiceNumber': _invoiceNumberController.text.trim(),
           'invoiceDate':
               _selectedInvoiceDate?.toIso8601String() ??
               DateTime.now().toIso8601String(),
@@ -3750,26 +4379,34 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
         'serviceExecution': {'jobEndTime': DateTime.now().toIso8601String()},
       });
 
-      await _service.updateBookingStatus(_booking!.id, 'SERVICE_COMPLETED');
+      // Same as web: saving the bill already moves SERVICE_STARTED →
+      // SERVICE_COMPLETED on the backend; calling the status endpoint again
+      // is rejected (merchant can't change status after completion) and made
+      // a successful submit show "Failed to submit bill".
+      final statusBefore = _booking!.status.toUpperCase();
+      const doneStatuses = {
+        'SERVICE_STARTED',
+        'SERVICE_COMPLETED',
+        'OUT_FOR_DELIVERY',
+        'DELIVERED',
+        'COMPLETED',
+      };
+      if (!doneStatuses.contains(statusBefore)) {
+        await _service.updateBookingStatus(_booking!.id, 'SERVICE_COMPLETED');
+      }
 
       await _load(_booking!.id);
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(
-              content: Text('Bill submitted and service completed'),
-            ),
-          );
+          StatusFeedback.auto('Bill submitted and service completed');
         }
       }
     } catch (e) {
       if (mounted) {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Failed to submit bill')),
-          );
+          StatusFeedback.auto('Failed to submit bill');
         }
       }
     } finally {
@@ -3783,20 +4420,9 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     final bool isOnHold = status == 'ON HOLD';
     final bool showMoveToServiceStarted =
         status == 'REACHED_MERCHANT' && !_serviceStartedLocally;
-    final bool showBillingHint = status == 'SERVICE_STARTED';
-    final bool canMarkDelay = ![
-      'COMPLETED',
-      'DELIVERED',
-      'SERVICE_COMPLETED',
-      'OUT_FOR_DELIVERY',
-      'ON HOLD',
-      'CANCELLED',
-    ].contains(status);
-
-    if (!isOnHold &&
-        !showMoveToServiceStarted &&
-        !showBillingHint &&
-        !canMarkDelay) {
+    // "Mark Delay / Hold" removed (app + web); Resume Work stays for orders
+    // that are already on hold.
+    if (!isOnHold && !showMoveToServiceStarted) {
       return const SizedBox.shrink();
     }
 
@@ -3855,47 +4481,6 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 ],
               ),
             ),
-          if (showBillingHint)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF1E3A8A).withValues(alpha: 0.25)
-                    : const Color(0xFFEFF6FF),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark
-                      ? const Color(0xFF60A5FA).withValues(alpha: 0.35)
-                      : const Color(0xFFBFDBFE),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline_rounded,
-                    size: 18,
-                    color: isDark
-                        ? const Color(0xFF93C5FD)
-                        : const Color(0xFF1D4ED8),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Complete QC Check and Health, then use Billing to upload the bill and complete service.',
-                      style: TextStyle(
-                        color: isDark
-                            ? const Color(0xFFBFDBFE)
-                            : const Color(0xFF1D4ED8),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           Row(
             children: [
               if (showMoveToServiceStarted)
@@ -3935,40 +4520,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                     ),
                   ),
                 ),
-              if (canMarkDelay) ...[
-                if (showMoveToServiceStarted) const SizedBox(width: 12),
-                SizedBox(
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: _isSaving ? null : _showDelayDialog,
-                    icon: const Icon(
-                      Icons.timer_outlined,
-                      color: Colors.red,
-                      size: 18,
-                    ),
-                    label: const Text(
-                      'Mark Delay / Hold',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFFECACA)),
-                      backgroundColor: isDark
-                          ? const Color(0xFF7F1D1D).withValues(alpha: 0.25)
-                          : const Color(0xFFFEF2F2),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
               if (isOnHold) ...[
-                if (showMoveToServiceStarted || canMarkDelay)
-                  const SizedBox(width: 12),
+                if (showMoveToServiceStarted) const SizedBox(width: 12),
                 Expanded(
                   child: SizedBox(
                     height: 50,
@@ -3996,6 +4549,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     );
   }
 
+  // ignore: unused_element — delay/hold button removed, kept for re-enabling.
   Future<void> _showDelayDialog() async {
     final List<String> reasons = [
       'Waiting for parts',
@@ -4068,15 +4622,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       await _service.updateBookingStatus(_booking!.id, 'On Hold');
       await _load(_booking!.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Order marked as On Hold')),
-        );
+        StatusFeedback.auto('Order marked as On Hold');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Failed to mark delay')));
+        StatusFeedback.auto('Failed to mark delay');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -4095,91 +4645,15 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       });
       await _load(_booking!.id);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Work resumed')));
+        StatusFeedback.auto('Work resumed');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Failed to resume work')));
+        StatusFeedback.auto('Failed to resume work');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
-  }
-
-  Widget _buildInfoCard({
-    required String title,
-    required IconData icon,
-    required List<Widget> children,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.backgroundSecondary : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark ? AppColors.borderColor : Colors.grey[200]!,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: isDark
-                    ? AppColors.primaryPurple
-                    : const Color(0xFF7C3AED),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: isDark ? Colors.white : Colors.black,
-                ),
-              ),
-            ],
-          ),
-          Divider(
-            height: 24,
-            color: isDark ? AppColors.borderColor : Colors.grey[200],
-          ),
-          ...children,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              color: isDark ? Colors.white : Colors.black,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildWarranty() {
@@ -4188,7 +4662,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
     if (warranty?.name != null && warranty!.name!.isNotEmpty) {
       return SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, _fabClearance),
         child: Card(
           elevation: 0,
           shape: RoundedRectangleBorder(
@@ -4210,13 +4684,9 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
+                    _sectionTitle(
+                      Icons.verified_rounded,
                       'Warranty Information',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: isDark ? Colors.white : Colors.black,
-                      ),
                     ),
                     Text(
                       warranty.addedAt ?? '',
@@ -4254,7 +4724,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, _fabClearance),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4417,8 +4887,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
   }
 
   Future<void> _pickWarrantyImage() async {
-    final XFile? photo = await _picker.pickImage(
-      source: ImageSource.gallery,
+    final source = await chooseImageSource(context);
+    if (source == null) return;
+    final XFile? photo = await pickImageSafely(
+      _picker,
+      source: source,
       maxWidth: 1024,
       maxHeight: 1024,
       imageQuality: 60,
@@ -4438,17 +4911,13 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
   Future<void> _submitWarranty() async {
     if (_booking == null) return;
     if (_warrantyNameController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter product name')),
-      );
+      StatusFeedback.auto('Please enter product name');
       return;
     }
     final price = double.tryParse(_warrantyPriceController.text);
     final months = int.tryParse(_warrantyMonthsController.text);
     if (price == null || price <= 0 || months == null || months <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter valid price and months')),
-      );
+      StatusFeedback.auto('Enter valid price and months');
       return;
     }
     setState(() => _isSaving = true);
@@ -4462,15 +4931,11 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       );
       await _load(_booking!.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Warranty added successfully')),
-        );
+        StatusFeedback.auto('Warranty added successfully');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Failed to add warranty')));
+        StatusFeedback.auto('Failed to add warranty');
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -4483,6 +4948,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       _isChatOpen = true;
       _unreadChatCount = 0;
     });
+    if (_booking != null) await ChatSeenStore.markSeen(_booking!.id);
+    if (!mounted) return;
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -4506,6 +4973,9 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
         ),
       ),
     );
+    if (!mounted) return;
+    // Messages read while the sheet was open count as seen.
+    if (_booking != null) await ChatSeenStore.markSeen(_booking!.id);
     if (!mounted) return;
     setState(() => _isChatOpen = false);
   }
@@ -4733,11 +5203,14 @@ class _ChatDialogState extends State<_ChatDialog> {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: image,
-                        height: 120,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
+                      child: ViewableImage(
+                        url: image,
+                        child: CachedNetworkImage(
+                          imageUrl: image,
+                          height: 120,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                   ),
@@ -5053,7 +5526,9 @@ class _ChatDialogState extends State<_ChatDialog> {
                     hintText: 'Type a message...',
                     hintStyle: TextStyle(
                       fontSize: 15,
-                      color: isDark ? Colors.grey[500] : const Color(0xFF9CA3AF),
+                      color: isDark
+                          ? Colors.grey[500]
+                          : const Color(0xFF9CA3AF),
                     ),
                     counterText: '',
                     isDense: true,
@@ -5084,10 +5559,11 @@ class _ChatDialogState extends State<_ChatDialog> {
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(24),
                       borderSide: BorderSide(
-                        color: (isDark
-                                ? AppColors.primaryPurple
-                                : const Color(0xFF7C3AED))
-                            .withValues(alpha: 0.45),
+                        color:
+                            (isDark
+                                    ? AppColors.primaryPurple
+                                    : const Color(0xFF7C3AED))
+                                .withValues(alpha: 0.45),
                       ),
                     ),
                   ),
@@ -5109,7 +5585,11 @@ class _ChatDialogState extends State<_ChatDialog> {
                   child: const SizedBox(
                     width: 44,
                     height: 44,
-                    child: Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                    child: Icon(
+                      Icons.send_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                   ),
                 ),
               ),
@@ -5150,8 +5630,11 @@ class _AddPartDialogState extends State<_AddPartDialog> {
   }
 
   Future<void> _pickImage() async {
-    final XFile? photo = await _picker.pickImage(
-      source: ImageSource.gallery,
+    final source = await chooseImageSource(context);
+    if (source == null) return;
+    final XFile? photo = await pickImageSafely(
+      _picker,
+      source: source,
       maxWidth: 1024,
       maxHeight: 1024,
       imageQuality: 60,
@@ -5170,9 +5653,7 @@ class _AddPartDialogState extends State<_AddPartDialog> {
 
   Future<void> _submit() async {
     if (_nameController.text.isEmpty || _priceController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all fields')),
-      );
+      StatusFeedback.auto('Please fill in all fields');
       return;
     }
     setState(() => _loading = true);
@@ -5191,9 +5672,7 @@ class _AddPartDialogState extends State<_AddPartDialog> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to send approval request')),
-        );
+        StatusFeedback.auto('Failed to send approval request');
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -5222,10 +5701,7 @@ class _AddPartDialogState extends State<_AddPartDialog> {
       ),
     );
 
-    InputDecoration deco({
-      String? hint,
-      String? prefix,
-    }) {
+    InputDecoration deco({String? hint, String? prefix}) {
       return InputDecoration(
         hintText: hint,
         prefixText: prefix,
@@ -5268,211 +5744,210 @@ class _AddPartDialogState extends State<_AddPartDialog> {
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       backgroundColor: isDark ? AppColors.backgroundSecondary : Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Add Additional Part',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: textColor,
-                        ),
+      // Dialog already lifts itself above the keyboard; adding viewInsets
+      // padding here counted the keyboard twice and squashed the form.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Add Additional Part',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: textColor,
                       ),
                     ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      onPressed: _loading
-                          ? null
-                          : () => Navigator.pop(context),
-                      icon: Icon(
-                        Icons.close_rounded,
-                        color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                labeled(
-                  'Part Name',
-                  TextField(
-                    controller: _nameController,
-                    minLines: 1,
-                    maxLines: 3,
-                    textCapitalization: TextCapitalization.sentences,
-                    style: TextStyle(color: textColor, fontSize: 15),
-                    decoration: deco(hint: 'Enter part name'),
                   ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _loading ? null : () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: isDark
+                          ? Colors.grey[400]
+                          : const Color(0xFF6B7280),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              labeled(
+                'Part Name',
+                TextField(
+                  controller: _nameController,
+                  minLines: 1,
+                  maxLines: 3,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: TextStyle(color: textColor, fontSize: 15),
+                  decoration: deco(hint: 'Enter part name'),
                 ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: labeled(
-                        'Quantity',
-                        TextField(
-                          controller: _qtyController,
-                          keyboardType: TextInputType.number,
-                          style: TextStyle(color: textColor, fontSize: 15),
-                          decoration: deco(hint: '1'),
-                        ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: labeled(
+                      'Quantity',
+                      TextField(
+                        controller: _qtyController,
+                        keyboardType: TextInputType.number,
+                        style: TextStyle(color: textColor, fontSize: 15),
+                        decoration: deco(hint: '1'),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: labeled(
-                        'Price',
-                        TextField(
-                          controller: _priceController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          style: TextStyle(color: textColor, fontSize: 15),
-                          decoration: deco(hint: '0', prefix: '₹ '),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: labeled(
+                      'Price',
+                      TextField(
+                        controller: _priceController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
                         ),
+                        style: TextStyle(color: textColor, fontSize: 15),
+                        decoration: deco(hint: '0', prefix: '₹ '),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                labeled(
-                  'Part Image (Optional)',
-                  InkWell(
-                    onTap: _loading ? null : _pickImage,
-                    borderRadius: radius,
-                    child: Container(
-                      width: double.infinity,
-                      constraints: const BoxConstraints(minHeight: 108),
-                      decoration: BoxDecoration(
-                        color: fill,
-                        borderRadius: radius,
-                        border: Border.all(
-                          color: isDark
-                              ? AppColors.borderColor
-                              : const Color(0xFFE5E7EB),
-                        ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              labeled(
+                'Part Image (Optional)',
+                InkWell(
+                  onTap: _loading ? null : _pickImage,
+                  borderRadius: radius,
+                  child: Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(minHeight: 108),
+                    decoration: BoxDecoration(
+                      color: fill,
+                      borderRadius: radius,
+                      border: Border.all(
+                        color: isDark
+                            ? AppColors.borderColor
+                            : const Color(0xFFE5E7EB),
                       ),
-                      clipBehavior: Clip.antiAlias,
-                      child: _imageUrl != null
-                          ? Stack(
-                              children: [
-                                SizedBox(
-                                  height: 140,
-                                  width: double.infinity,
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: _imageUrl != null
+                        ? Stack(
+                            children: [
+                              SizedBox(
+                                height: 140,
+                                width: double.infinity,
+                                child: ViewableImage(
+                                  url: _imageUrl!,
                                   child: CachedNetworkImage(
                                     imageUrl: _imageUrl!,
                                     fit: BoxFit.cover,
                                   ),
                                 ),
-                                Positioned(
-                                  right: 8,
-                                  top: 8,
-                                  child: Material(
-                                    color: Colors.black54,
-                                    shape: const CircleBorder(),
-                                    child: InkWell(
-                                      customBorder: const CircleBorder(),
-                                      onTap: _loading
-                                          ? null
-                                          : () => setState(() => _imageUrl = null),
-                                      child: const Padding(
-                                        padding: EdgeInsets.all(6),
-                                        child: Icon(
-                                          Icons.close_rounded,
-                                          size: 16,
-                                          color: Colors.white,
-                                        ),
+                              ),
+                              Positioned(
+                                right: 8,
+                                top: 8,
+                                child: Material(
+                                  color: Colors.black54,
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: _loading
+                                        ? null
+                                        : () =>
+                                              setState(() => _imageUrl = null),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(6),
+                                      child: Icon(
+                                        Icons.close_rounded,
+                                        size: 16,
+                                        color: Colors.white,
                                       ),
                                     ),
                                   ),
                                 ),
-                              ],
-                            )
-                          : Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 22),
-                              child: Column(
-                                children: [
-                                  Icon(
-                                    Icons.add_a_photo_outlined,
-                                    size: 28,
-                                    color: isDark
-                                        ? Colors.grey[500]
-                                        : const Color(0xFF9CA3AF),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    _loading ? 'Uploading…' : 'Tap to upload',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark
-                                          ? Colors.grey[400]
-                                          : const Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                ],
                               ),
+                            ],
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 22),
+                            child: Column(
+                              children: [
+                                Icon(
+                                  Icons.add_a_photo_outlined,
+                                  size: 28,
+                                  color: isDark
+                                      ? Colors.grey[500]
+                                      : const Color(0xFF9CA3AF),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _loading ? 'Uploading…' : 'Tap to upload',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark
+                                        ? Colors.grey[400]
+                                        : const Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ],
                             ),
-                    ),
+                          ),
                   ),
                 ),
-                const SizedBox(height: 22),
-                Row(
-                  children: [
-                    TextButton(
-                      onPressed: _loading
-                          ? null
-                          : () => Navigator.pop(context),
-                      child: Text(
-                        'Cancel',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: isDark ? AppColors.primaryPurple : _accent,
-                        ),
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: _loading ? null : () => Navigator.pop(context),
+                    child: Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? AppColors.primaryPurple : _accent,
                       ),
                     ),
-                    const Spacer(),
-                    FilledButton(
-                      onPressed: _loading ? null : _submit,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _accent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        shape: const StadiumBorder(),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: _loading ? null : _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _accent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
                       ),
-                      child: _loading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text(
-                              'Send for Approval',
-                              style: TextStyle(fontWeight: FontWeight.w700),
+                      shape: const StadiumBorder(),
+                    ),
+                    child: _loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
                             ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                          )
+                        : const Text(
+                            'Send for Approval',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),

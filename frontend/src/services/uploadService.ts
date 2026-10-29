@@ -69,6 +69,13 @@ const compressImage = (file: File): Promise<File> => {
   });
 };
 
+
+/** e.g. "Carzzi_Invoice_INV2026102904.jpg" — keeps the uploaded file's extension. */
+export const invoiceFileName = (fileUrl: string, orderNumber?: string | null) => {
+  const ext = (fileUrl.split('?')[0].match(/\.([a-zA-Z0-9]{2,5})$/)?.[1] || 'pdf').toLowerCase();
+  return `Carzzi_Invoice_${orderNumber || 'booking'}.${ext}`;
+};
+
 export const uploadService = {
   uploadFile: async (file: File, options?: { skipCompression?: boolean }) => {
     let fileToUpload = file;
@@ -147,5 +154,22 @@ export const uploadService = {
       params: { url }
     });
     return response.data.url;
+  },
+
+  /**
+   * Save an uploaded S3 file to the device instead of previewing it. S3 is
+   * cross-origin, so `<a download>` is ignored — the backend signs a URL
+   * with `Content-Disposition: attachment`, which forces a download.
+   */
+  downloadFile: async (fileUrl: string, filename?: string) => {
+    const response = await api.get('/upload/download-url', {
+      params: { url: fileUrl, filename }
+    });
+    const link = document.createElement('a');
+    link.href = response.data.url;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 };

@@ -3,7 +3,7 @@ import { ShieldCheck, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { Slider } from '@/components/ui/slider';
 import { vehicleService, Vehicle } from '../../services/vehicleService';
-import { Booking } from '../../services/bookingService';
+import { Booking, bookingService } from '../../services/bookingService';
 import { calculateHealthDisplayPercent, dailyDecayPercentFromBaseline, calculateRemainingHealthPercentLegacy } from '@/lib/vehicleHealthRemaining';
 
 interface VehicleHealthPanelProps {
@@ -17,65 +17,34 @@ const VehicleHealthPanel: React.FC<VehicleHealthPanelProps> = ({ booking, onUpda
   const vehicle = booking.vehicle as unknown as Vehicle;
   const [loading, setLoading] = useState(false);
 
-  const [health, setHealth] = useState({
-    generalService: {
-        value: vehicle?.healthIndicators?.generalService?.value ?? 0,
-        fixedKm: vehicle?.healthIndicators?.generalService?.fixedKm ?? 0,
-        fixedDays: vehicle?.healthIndicators?.generalService?.fixedDays ?? 0
-    },
-    brakePads: {
-        value: vehicle?.healthIndicators?.brakePads?.value ?? 0,
-        fixedKm: vehicle?.healthIndicators?.brakePads?.fixedKm ?? 0,
-        fixedDays: vehicle?.healthIndicators?.brakePads?.fixedDays ?? 0
-    },
-    tires: {
-        value: vehicle?.healthIndicators?.tires?.value ?? 0,
-        fixedKm: vehicle?.healthIndicators?.tires?.fixedKm ?? 0,
-        fixedDays: vehicle?.healthIndicators?.tires?.fixedDays ?? 0
-    },
-    battery: {
-        value: vehicle?.healthIndicators?.battery?.value ?? 0,
-        fixedKm: vehicle?.healthIndicators?.battery?.fixedKm ?? 0,
-        fixedDays: vehicle?.healthIndicators?.battery?.fixedDays ?? 0
-    },
-    wiperBlade: {
-        value: vehicle?.healthIndicators?.wiperBlade?.value ?? 0,
-        fixedKm: vehicle?.healthIndicators?.wiperBlade?.fixedKm ?? 0,
-        fixedDays: vehicle?.healthIndicators?.wiperBlade?.fixedDays ?? 0
-    },
-  });
+  // Health indicators live on the vehicle. They're shown only once health was
+  // saved on THIS order (booking.healthSavedAt); a new order for the same car
+  // starts empty (same rule as the mobile app).
+  const buildHealth = () => {
+    const fromThisOrder = !!(booking as any).healthSavedAt;
+    const row = (key: 'generalService' | 'brakePads' | 'tires' | 'battery' | 'wiperBlade') => {
+      const ind = (vehicle?.healthIndicators as any)?.[key];
+      return fromThisOrder
+        ? { value: ind?.value ?? 0, fixedKm: ind?.fixedKm ?? 0, fixedDays: ind?.fixedDays ?? 0 }
+        : { value: 0, fixedKm: 0, fixedDays: 0 };
+    };
+    return {
+      generalService: row('generalService'),
+      brakePads: row('brakePads'),
+      tires: row('tires'),
+      battery: row('battery'),
+      wiperBlade: row('wiperBlade'),
+    };
+  };
+
+  const [health, setHealth] = useState(buildHealth);
 
   useEffect(() => {
     if (vehicle?.healthIndicators) {
-      setHealth({
-        generalService: {
-            value: vehicle.healthIndicators.generalService?.value ?? 0,
-            fixedKm: vehicle.healthIndicators.generalService?.fixedKm ?? 0,
-            fixedDays: vehicle.healthIndicators.generalService?.fixedDays ?? 0
-        },
-        brakePads: {
-            value: vehicle.healthIndicators.brakePads?.value ?? 0,
-            fixedKm: vehicle.healthIndicators.brakePads?.fixedKm ?? 0,
-            fixedDays: vehicle.healthIndicators.brakePads?.fixedDays ?? 0
-        },
-        tires: {
-            value: vehicle.healthIndicators.tires?.value ?? 0,
-            fixedKm: vehicle.healthIndicators.tires?.fixedKm ?? 0,
-            fixedDays: vehicle.healthIndicators.tires?.fixedDays ?? 0
-        },
-        battery: {
-            value: vehicle.healthIndicators.battery?.value ?? 0,
-            fixedKm: vehicle.healthIndicators.battery?.fixedKm ?? 0,
-            fixedDays: vehicle.healthIndicators.battery?.fixedDays ?? 0
-        },
-        wiperBlade: {
-            value: vehicle.healthIndicators.wiperBlade?.value ?? 0,
-            fixedKm: vehicle.healthIndicators.wiperBlade?.fixedKm ?? 0,
-            fixedDays: vehicle.healthIndicators.wiperBlade?.fixedDays ?? 0
-        },
-      });
+      setHealth(buildHealth());
     }
-  }, [vehicle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicle, (booking as any).healthSavedAt]);
 
   const displayHealth = useMemo(() => {
     const currentKm = vehicle?.mileage || 0;
@@ -179,6 +148,8 @@ const VehicleHealthPanel: React.FC<VehicleHealthPanelProps> = ({ booking, onUpda
     setLoading(true);
     try {
       await vehicleService.updateVehicleHealth(vehicle._id, health);
+      // Mark health as saved on this order (keeps fields filled for it).
+      await bookingService.updateBookingDetails(booking._id, { healthSaved: true } as any);
       toast.success('Vehicle health indicators updated successfully');
       if (onHealthStatsSaved) {
         await onHealthStatsSaved();
@@ -239,23 +210,29 @@ const VehicleHealthPanel: React.FC<VehicleHealthPanelProps> = ({ booking, onUpda
                         <span className="text-xl shrink-0">{indicator.icon}</span>
                         <div className="flex flex-col min-w-0 flex-1">
                             <span className="font-medium text-sm break-words">{indicator.label}</span>
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
-                                <span className="text-[10px] text-muted-foreground shrink-0">Fixed KM:</span>
-                                <input 
-                                    type="number"
-                                    value={health[indicator.key].fixedKm}
-                                    onChange={(e) => handleKmChange(indicator.key, e.target.value)}
-                                    className="w-20 min-w-0 h-7 text-[10px] border rounded px-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    placeholder="Enter KM"
-                                />
-                                <span className="text-[10px] text-muted-foreground shrink-0">Fixed Days:</span>
-                                <input 
-                                    type="number"
-                                    value={health[indicator.key].fixedDays}
-                                    onChange={(e) => handleDaysChange(indicator.key, e.target.value)}
-                                    className="w-20 min-w-0 h-7 text-[10px] border rounded px-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    placeholder="Days"
-                                />
+                            <div className="grid grid-cols-2 gap-3 mt-3 max-w-sm">
+                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                    Fixed KM
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={health[indicator.key].fixedKm || ''}
+                                        onChange={(e) => handleKmChange(indicator.key, e.target.value.replace(/\D/g, ''))}
+                                        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        placeholder="e.g. 10000"
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                    Fixed Days
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={health[indicator.key].fixedDays || ''}
+                                        onChange={(e) => handleDaysChange(indicator.key, e.target.value.replace(/\D/g, ''))}
+                                        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        placeholder="e.g. 180"
+                                    />
+                                </label>
                             </div>
                         </div>
                     </div>

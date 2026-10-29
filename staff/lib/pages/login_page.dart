@@ -119,8 +119,13 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       });
 
       try {
-        final masked = await _authService.sendPhoneLoginOtp(phone: identifier);
+        final result = await _authService.sendPhoneLoginOtp(phone: identifier);
         if (!mounted) return;
+        if (result.user != null) {
+          _navigateAfterLogin(result.user!);
+          return;
+        }
+        final masked = result.maskedPhone ?? '';
         setState(() {
           _maskedPhone = masked.isNotEmpty ? masked : null;
           _otpController.clear();
@@ -192,8 +197,13 @@ class _StaffLoginPageState extends State<StaffLoginPage>
         _otpController.clear();
       });
 
-      final masked = await _authService.sendLoginOtp(email: email);
+      final sent = await _authService.sendLoginOtp(email: email);
       if (!mounted) return;
+      if (sent.user != null) {
+        _navigateAfterLogin(sent.user!);
+        return;
+      }
+      final masked = sent.maskedPhone ?? '';
       if (masked.isNotEmpty) {
         setState(() => _maskedPhone = masked);
       }
@@ -251,10 +261,15 @@ class _StaffLoginPageState extends State<StaffLoginPage>
     });
 
     try {
-      final masked = _step == _LoginStep.phoneOtp
+      final sent = _step == _LoginStep.phoneOtp
           ? await _authService.sendPhoneLoginOtp(phone: identifier)
           : await _authService.sendLoginOtp(email: identifier);
       if (!mounted) return;
+      if (sent.user != null) {
+        _navigateAfterLogin(sent.user!);
+        return;
+      }
+      final masked = sent.maskedPhone ?? '';
       if (masked.isNotEmpty) {
         setState(() => _maskedPhone = masked);
       }
@@ -317,73 +332,84 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       child: Scaffold(
         resizeToAvoidBottomInset: true,
         body: Stack(
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [AppColors.splashDeepBlack, AppColors.splashDarkGray],
-              ),
-            ),
-          ),
-          Center(
-            child: Container(
-              width: 400,
-              height: 400,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    AppColors.cinematicOrange.withValues(alpha: 0.15),
-                    Colors.transparent,
-                  ],
-                  stops: const [0.0, 0.7],
+          children: [
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [AppColors.splashDeepBlack, AppColors.splashDarkGray],
                 ),
               ),
             ),
-          ),
-          SafeArea(
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: SlideTransition(
-                position: _slideAnimation,
-                child: Center(
-                  child: SingleChildScrollView(
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
-                    ),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Image.asset(
-                            'assets/appicon.png',
-                            width: 220,
-                            color: Colors.white,
-                            fit: BoxFit.contain,
-                          ),
-                          const SizedBox(height: 20),
-                          Wrap(
-                            alignment: WrapAlignment.center,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              ShaderMask(
-                                shaderCallback: (bounds) =>
-                                    const LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        Color(0xFFFFE082),
-                                        Color(0xFFFFA000),
-                                      ],
-                                    ).createShader(bounds),
-                                child: Text(
-                                  'Drive Smarter ',
+            Center(
+              child: Container(
+                width: 400,
+                height: 400,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      AppColors.cinematicOrange.withValues(alpha: 0.15),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.7],
+                  ),
+                ),
+              ),
+            ),
+            SafeArea(
+              child: FadeTransition(
+                opacity: _fadeAnimation,
+                child: SlideTransition(
+                  position: _slideAnimation,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Image.asset(
+                              'assets/appicon.png',
+                              width: 220,
+                              color: Colors.white,
+                              fit: BoxFit.contain,
+                            ),
+                            const SizedBox(height: 20),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                ShaderMask(
+                                  shaderCallback: (bounds) =>
+                                      const LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Color(0xFFFFE082),
+                                          Color(0xFFFFA000),
+                                        ],
+                                      ).createShader(bounds),
+                                  child: Text(
+                                    'Drive Smarter ',
+                                    style: theme.textTheme.headlineSmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          fontFamily: 'serif',
+                                          fontSize: 28,
+                                          color: Colors.white,
+                                        ),
+                                  ),
+                                ),
+                                Text(
+                                  'Manage Easier',
                                   style: theme.textTheme.headlineSmall
                                       ?.copyWith(
                                         fontWeight: FontWeight.bold,
@@ -392,295 +418,294 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                                         color: Colors.white,
                                       ),
                                 ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              height: 1.5,
+                              width: double.infinity,
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 40,
                               ),
-                              Text(
-                                'Manage Easier',
-                                style: theme.textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  fontFamily: 'serif',
-                                  fontSize: 28,
-                                  color: Colors.white,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Colors.transparent,
+                                    const Color(
+                                      0xFFFFB74D,
+                                    ).withValues(alpha: 0.5),
+                                    const Color(0xFFFFB74D),
+                                    const Color(
+                                      0xFFFFB74D,
+                                    ).withValues(alpha: 0.5),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
                                 ),
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            height: 1.5,
-                            width: double.infinity,
-                            margin: const EdgeInsets.symmetric(horizontal: 40),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  Colors.transparent,
-                                  const Color(
-                                    0xFFFFB74D,
-                                  ).withValues(alpha: 0.5),
-                                  const Color(0xFFFFB74D),
-                                  const Color(
-                                    0xFFFFB74D,
-                                  ).withValues(alpha: 0.5),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
-                              ),
                             ),
-                          ),
-                          const SizedBox(height: 30),
-                          Card(
-                            color: AppColors.backgroundSecondary.withValues(
-                              alpha: 0.9,
-                            ),
-                            elevation: 8,
-                            shadowColor: Colors.black.withValues(alpha: 0.5),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.05),
+                            const SizedBox(height: 30),
+                            Card(
+                              color: AppColors.backgroundSecondary.withValues(
+                                alpha: 0.9,
                               ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                24,
-                                32,
-                                24,
-                                24,
+                              elevation: 8,
+                              shadowColor: Colors.black.withValues(alpha: 0.5),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                                side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.05),
+                                ),
                               ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Text(
-                                    _headingText,
-                                    textAlign: TextAlign.center,
-                                    style: theme.textTheme.headlineSmall
-                                        ?.copyWith(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          letterSpacing: 0.5,
-                                        ),
-                                  ),
-                                  if (_step == _LoginStep.password) ...[
-                                    const SizedBox(height: 8),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  24,
+                                  32,
+                                  24,
+                                  24,
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
                                     Text(
-                                      _identifierController.text.trim(),
+                                      _headingText,
                                       textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.white60,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                  if (isOtpStep) ...[
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Code sent to ${_maskedPhone ?? 'your WhatsApp'}',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.white60,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 32),
-                                  if (_step == _LoginStep.identifier) ...[
-                                    _GlassField(
-                                      controller: _identifierController,
-                                      hintText: 'Email or mobile number',
-                                      keyboardType: TextInputType.emailAddress,
-                                      textInputAction: TextInputAction.done,
-                                      prefixIcon: Icons.person_outline,
-                                      onChanged: _clearError,
-                                      onSubmitted: (_) =>
-                                          _handleIdentifierNext(),
-                                      extraInputFormatters: [
-                                        IndianPhoneOrEmailInputFormatter(),
-                                      ],
-                                    ),
-                                  ] else if (_step == _LoginStep.password) ...[
-                                    _GlassField(
-                                      controller: _passwordController,
-                                      hintText: 'Password',
-                                      obscureText: !_showPassword,
-                                      textInputAction: TextInputAction.done,
-                                      prefixIcon: Icons.lock_outline,
-                                      maxLength: 15,
-                                      suffix: IconButton(
-                                        onPressed: () => setState(
-                                          () => _showPassword = !_showPassword,
-                                        ),
-                                        icon: Icon(
-                                          _showPassword
-                                              ? Icons.visibility_off
-                                              : Icons.visibility,
-                                          color: Colors.white38,
-                                          size: 20,
-                                        ),
-                                      ),
-                                      onChanged: _clearError,
-                                      onSubmitted: (_) => _handleCredentials(),
-                                    ),
-                                  ] else ...[
-                                    _GlassField(
-                                      controller: _otpController,
-                                      hintText: '6-digit OTP',
-                                      keyboardType: TextInputType.number,
-                                      textInputAction: TextInputAction.done,
-                                      prefixIcon: Icons.sms_outlined,
-                                      maxLength: 6,
-                                      onChanged: _clearError,
-                                      onSubmitted: (_) => _handleVerifyOtp(),
-                                    ),
-                                  ],
-                                  if (_errorText != null) ...[
-                                    const SizedBox(height: 16),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.error.withValues(
-                                          alpha: 0.1,
-                                        ),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.error_outline,
-                                            color: AppColors.error,
-                                            size: 18,
+                                      style: theme.textTheme.headlineSmall
+                                          ?.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 0.5,
                                           ),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child: Text(
-                                              _errorText!,
-                                              style: const TextStyle(
-                                                color: AppColors.error,
-                                                fontSize: 13,
-                                              ),
-                                            ),
-                                          ),
+                                    ),
+                                    if (_step == _LoginStep.password) ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        _identifierController.text.trim(),
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: Colors.white60,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                    if (isOtpStep) ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Code sent to ${_maskedPhone ?? 'your WhatsApp'}',
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: Colors.white60,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 32),
+                                    if (_step == _LoginStep.identifier) ...[
+                                      _GlassField(
+                                        controller: _identifierController,
+                                        hintText: 'Email or mobile number',
+                                        keyboardType:
+                                            TextInputType.emailAddress,
+                                        textInputAction: TextInputAction.done,
+                                        prefixIcon: Icons.person_outline,
+                                        onChanged: _clearError,
+                                        onSubmitted: (_) =>
+                                            _handleIdentifierNext(),
+                                        extraInputFormatters: [
+                                          IndianPhoneOrEmailInputFormatter(),
                                         ],
                                       ),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 32),
-                                  SizedBox(
-                                    height: 56,
-                                    child: ElevatedButton(
-                                      onPressed: _isSubmitting
-                                          ? null
-                                          : _handlePrimaryAction,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor:
-                                            AppColors.cinematicOrange,
-                                        foregroundColor: Colors.white,
-                                        elevation: 4,
-                                        shadowColor: AppColors.cinematicOrange
-                                            .withValues(alpha: 0.4),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            16,
+                                    ] else if (_step ==
+                                        _LoginStep.password) ...[
+                                      _GlassField(
+                                        controller: _passwordController,
+                                        hintText: 'Password',
+                                        obscureText: !_showPassword,
+                                        textInputAction: TextInputAction.done,
+                                        prefixIcon: Icons.lock_outline,
+                                        maxLength: 15,
+                                        suffix: IconButton(
+                                          onPressed: () => setState(
+                                            () =>
+                                                _showPassword = !_showPassword,
+                                          ),
+                                          icon: Icon(
+                                            _showPassword
+                                                ? Icons.visibility_off
+                                                : Icons.visibility,
+                                            color: Colors.white38,
+                                            size: 20,
                                           ),
                                         ),
-                                        disabledBackgroundColor: AppColors
-                                            .cinematicOrange
-                                            .withValues(alpha: 0.6),
+                                        onChanged: _clearError,
+                                        onSubmitted: (_) =>
+                                            _handleCredentials(),
                                       ),
-                                      child: _isSubmitting
-                                          ? const SizedBox(
-                                              width: 24,
-                                              height: 24,
-                                              child:
-                                                  CircularProgressIndicator.adaptive(
-                                                    strokeWidth: 2.5,
-                                                    valueColor:
-                                                        AlwaysStoppedAnimation<
-                                                          Color
-                                                        >(Colors.white),
-                                                  ),
-                                            )
-                                          : Text(
-                                              _primaryButtonLabel,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                                letterSpacing: 1,
+                                    ] else ...[
+                                      _GlassField(
+                                        controller: _otpController,
+                                        hintText: '6-digit OTP',
+                                        keyboardType: TextInputType.number,
+                                        textInputAction: TextInputAction.done,
+                                        prefixIcon: Icons.sms_outlined,
+                                        maxLength: 6,
+                                        onChanged: _clearError,
+                                        onSubmitted: (_) => _handleVerifyOtp(),
+                                      ),
+                                    ],
+                                    if (_errorText != null) ...[
+                                      const SizedBox(height: 16),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.error.withValues(
+                                            alpha: 0.1,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.error_outline,
+                                              color: AppColors.error,
+                                              size: 18,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                _errorText!,
+                                                style: const TextStyle(
+                                                  color: AppColors.error,
+                                                  fontSize: 13,
+                                                ),
                                               ),
                                             ),
-                                    ),
-                                  ),
-                                  if (_step != _LoginStep.identifier) ...[
-                                    const SizedBox(height: 12),
-                                    Row(
-                                      mainAxisAlignment: isOtpStep
-                                          ? MainAxisAlignment.spaceBetween
-                                          : MainAxisAlignment.start,
-                                      children: [
-                                        TextButton(
-                                          onPressed: _isSubmitting
-                                              ? null
-                                              : _goToIdentifierStep,
-                                          child: const Text(
-                                            'Back',
-                                            style: TextStyle(
-                                              color: Colors.white60,
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 32),
+                                    SizedBox(
+                                      height: 56,
+                                      child: ElevatedButton(
+                                        onPressed: _isSubmitting
+                                            ? null
+                                            : _handlePrimaryAction,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              AppColors.cinematicOrange,
+                                          foregroundColor: Colors.white,
+                                          elevation: 4,
+                                          shadowColor: AppColors.cinematicOrange
+                                              .withValues(alpha: 0.4),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              16,
                                             ),
                                           ),
+                                          disabledBackgroundColor: AppColors
+                                              .cinematicOrange
+                                              .withValues(alpha: 0.6),
                                         ),
-                                        if (isOtpStep)
+                                        child: _isSubmitting
+                                            ? const SizedBox(
+                                                width: 24,
+                                                height: 24,
+                                                child:
+                                                    CircularProgressIndicator.adaptive(
+                                                      strokeWidth: 2.5,
+                                                      valueColor:
+                                                          AlwaysStoppedAnimation<
+                                                            Color
+                                                          >(Colors.white),
+                                                    ),
+                                              )
+                                            : Text(
+                                                _primaryButtonLabel,
+                                                style: const TextStyle(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.bold,
+                                                  letterSpacing: 1,
+                                                ),
+                                              ),
+                                      ),
+                                    ),
+                                    if (_step != _LoginStep.identifier) ...[
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        mainAxisAlignment: isOtpStep
+                                            ? MainAxisAlignment.spaceBetween
+                                            : MainAxisAlignment.start,
+                                        children: [
                                           TextButton(
                                             onPressed: _isSubmitting
                                                 ? null
-                                                : _handleResendOtp,
+                                                : _goToIdentifierStep,
                                             child: const Text(
-                                              'Resend OTP',
+                                              'Back',
                                               style: TextStyle(
-                                                color:
-                                                    AppColors.cinematicOrange,
-                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white60,
                                               ),
                                             ),
                                           ),
-                                      ],
-                                    ),
-                                  ],
-                                  if (_step == _LoginStep.identifier) ...[
-                                    const SizedBox(height: 20),
-                                    Center(
-                                      child: TextButton(
-                                        onPressed: _isSubmitting
-                                            ? null
-                                            : () => Navigator.of(
-                                                context,
-                                              ).pushNamed('/merchant-apply'),
-                                        child: const Text(
-                                          "Own a garage? Apply as a Partner",
-                                          style: TextStyle(
-                                            color: AppColors.cinematicOrange,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 13,
+                                          if (isOtpStep)
+                                            TextButton(
+                                              onPressed: _isSubmitting
+                                                  ? null
+                                                  : _handleResendOtp,
+                                              child: const Text(
+                                                'Resend OTP',
+                                                style: TextStyle(
+                                                  color:
+                                                      AppColors.cinematicOrange,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
+                                    if (_step == _LoginStep.identifier) ...[
+                                      const SizedBox(height: 20),
+                                      Center(
+                                        child: TextButton(
+                                          onPressed: _isSubmitting
+                                              ? null
+                                              : () => Navigator.of(
+                                                  context,
+                                                ).pushNamed('/merchant-apply'),
+                                          child: const Text(
+                                            "Own a garage? Apply as a Partner",
+                                            style: TextStyle(
+                                              color: AppColors.cinematicOrange,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
+                                    ],
                                   ],
-                                ],
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }

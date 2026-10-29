@@ -72,6 +72,30 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ bookingId, status, onUpdate, fo
   const isOpenRef = useRef(isOpen);
   const isMinimizedRef = useRef(isMinimized);
 
+  // Last time this user viewed this booking's chat, persisted so the unread
+  // badge survives refreshes instead of resetting to "all messages".
+  const lastSeenKey = `chat_last_seen_${bookingId}_${user?._id ?? 'anon'}`;
+  const readLastSeen = () => {
+    try {
+      return Number(localStorage.getItem(lastSeenKey)) || 0;
+    } catch {
+      return 0;
+    }
+  };
+  const markSeen = () => {
+    try {
+      localStorage.setItem(lastSeenKey, String(Date.now()));
+    } catch {
+      // storage unavailable — badge just won't persist
+    }
+  };
+  const isOwnMessage = (msg: any) =>
+    user ? String(msg?.sender?._id) === String(user._id) : msg?.sender?.role === 'customer';
+  const countUnread = (msgs: any[]) => {
+    const lastSeen = readLastSeen();
+    return msgs.filter((m) => !isOwnMessage(m) && new Date(m.createdAt || 0).getTime() > lastSeen).length;
+  };
+
   useEffect(() => {
     isOpenRef.current = isOpen;
     isMinimizedRef.current = isMinimized;
@@ -79,6 +103,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ bookingId, status, onUpdate, fo
     // Reset unread count when chat is opened and not minimized
     if (isOpen && !isMinimized) {
       setUnreadCount(0);
+      markSeen();
     }
   }, [isOpen, isMinimized]);
 
@@ -163,9 +188,12 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ bookingId, status, onUpdate, fo
         }
 
         // Only increment unread if not self and chat is closed or minimized
-        const isSelf = user ? (String(message.sender._id) === String(user._id)) : (message.sender.role === 'customer');
-        if (!isSelf && (!isOpenRef.current || isMinimizedRef.current)) {
-          setUnreadCount(prev => prev + 1);
+        if (!isOwnMessage(message)) {
+          if (!isOpenRef.current || isMinimizedRef.current) {
+            setUnreadCount(prev => prev + 1);
+          } else {
+            markSeen();
+          }
         }
 
         return [...prev, message];
@@ -185,9 +213,11 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ bookingId, status, onUpdate, fo
       });
 
       setMessages(filteredMessages);
-      // When messages are first loaded, if chat is closed/minimized, set total as unread
+      // Only messages from others that arrived after the last view are unread.
       if (!isOpenRef.current || isMinimizedRef.current) {
-        setUnreadCount(filteredMessages.length);
+        setUnreadCount(countUnread(filteredMessages));
+      } else {
+        markSeen();
       }
     };
 

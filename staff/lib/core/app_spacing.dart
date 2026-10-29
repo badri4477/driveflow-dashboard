@@ -30,8 +30,10 @@ class AppSpacing {
   static const EdgeInsets edgeInsetsAllDefault = EdgeInsets.all(defaultPadding);
   static const EdgeInsets edgeInsetsAllSection = EdgeInsets.all(section);
 
-  static const EdgeInsets edgeInsetsHorizontalDefault =
-      EdgeInsets.symmetric(horizontal: defaultPadding);
-  static const EdgeInsets edgeInsetsVerticalDefault =
-      EdgeInsets.symmetric(vertical: defaultPadding);
+  static const EdgeInsets edgeInsetsHorizontalDefault = EdgeInsets.symmetric(
+    horizontal: defaultPadding,
+  );
+  static const EdgeInsets edgeInsetsVerticalDefault = EdgeInsets.symmetric(
+    vertical: defaultPadding,
+  );
 }

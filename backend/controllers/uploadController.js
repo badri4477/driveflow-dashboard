@@ -254,5 +254,36 @@ export const getResumeSignedUrl = asyncHandler(async (req, res) => {
   res.json({ url: signedUrl });
 });
 
+// Signed GET URL that makes the browser SAVE an uploaded file (e.g. the
+// merchant invoice) instead of previewing it. Cross-origin S3 links ignore
+// the <a download> attribute, so the attachment header has to come from S3.
+export const getDownloadSignedUrl = asyncHandler(async (req, res) => {
+  const { url, filename } = req.query;
+  const bucket = process.env.AWS_S3_BUCKET_NAME;
+  let key;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== `${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com`) {
+      throw new Error('bad host');
+    }
+    key = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  } catch {
+    return res.status(400).json({ message: 'Invalid file URL' });
+  }
+  if (!key.startsWith('carzzi_uploads/')) {
+    return res.status(400).json({ message: 'Invalid file URL' });
+  }
+
+  const safeName =
+    String(filename || key.split('/').pop() || 'download').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${safeName}"`,
+  });
+  const signedUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+  res.json({ url: signedUrl });
+});
+
 export { upload };
 

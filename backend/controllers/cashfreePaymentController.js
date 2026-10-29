@@ -6,6 +6,7 @@ import paymentService from '../services/paymentService.js';
 import { logAudit } from './auditController.js';
 import { isValidDate } from '../utils/validation.js';
 import { sanitizeBooking } from './bookingController.js';
+import Booking from '../models/Booking.js';
 import { resolvePaymentAmount } from '../utils/resolvePaymentAmount.js';
 
 export const createOrder = async (req, res) => {
@@ -164,6 +165,20 @@ export const getUserOrders = async (req, res) => {
   }
 };
 
+// Admin payment-list row for a booking that has no matching Payment document.
+const toBookingRow = (b, status) => ({
+  _id: `booking_${b._id}`,
+  orderId: b.orderNumber || String(b._id).slice(-8).toUpperCase(),
+  amount: b.manualPayment?.amount ?? b.finalAmount ?? b.totalAmount ?? 0,
+  status,
+  createdAt: b.manualPayment?.markedAt || b.updatedAt,
+  userId: b.user,
+  user: b.user,
+  bookingId: b,
+  awaitingPayment: status === 'pending',
+  manualPayment: status === 'paid' && !!b.manualPayment?.markedAt,
+});
+
 export const getAllPayments = async (req, res) => {
   try {
     const { page = 1, limit = 20, status, startDate, endDate } = req.query;
@@ -201,7 +216,56 @@ export const getAllPayments = async (req, res) => {
       }
     }
     const payments = await Payment.find(filter).populate('userId', 'name email phone').populate('bookingId').sort({ createdAt: -1 }).skip(skip).limit(Number(limit));
-    const total = await Payment.countDocuments(filter);
+    let total = await Payment.countDocuments(filter);
+
+    // Bookings whose service is completed but not yet paid have no Payment
+    // document until the customer starts checkout — surface them as
+    // "pending" so admin sees what customers owe (page 1 only).
+    let awaiting = [];
+    if (Number(page) === 1 && (!status || status === 'pending')) {
+      const openPaymentBookingIds = await Payment.distinct('bookingId', {
+        status: { $in: ['created', 'attempted', 'pending'] },
+        bookingId: { $ne: null },
+      });
+      const bookingFilter = {
+        status: { $in: ['SERVICE_COMPLETED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'] },
+        paymentStatus: { $ne: 'paid' },
+        _id: { $nin: openPaymentBookingIds },
+      };
+      if (filter.createdAt) bookingFilter.updatedAt = filter.createdAt;
+
+      const bookings = await Booking.find(bookingFilter)
+        .populate('user', 'name email phone')
+        .sort({ updatedAt: -1 })
+        .limit(100);
+
+      awaiting = bookings.map((b) => toBookingRow(b, 'pending'));
+      total += awaiting.length;
+    }
+
+    // Paid bookings with no paid Payment document (admin marked DELIVERED
+    // = settled offline, or the gateway record was removed) — show as paid.
+    if (Number(page) === 1 && (!status || status === 'paid')) {
+      const paidPaymentBookingIds = await Payment.distinct('bookingId', {
+        status: 'paid',
+        bookingId: { $ne: null },
+      });
+      const bookingFilter = {
+        paymentStatus: 'paid',
+        _id: { $nin: paidPaymentBookingIds },
+      };
+      if (filter.createdAt) bookingFilter.updatedAt = filter.createdAt;
+
+      const bookings = await Booking.find(bookingFilter)
+        .populate('user', 'name email phone')
+        .sort({ updatedAt: -1 })
+        .limit(100);
+
+      const paidRows = bookings.map((b) => toBookingRow(b, 'paid'));
+      awaiting = [...awaiting, ...paidRows];
+      total += paidRows.length;
+    }
+
     const stats = await Payment.aggregate([
       { $match: filter },
       {
@@ -214,7 +278,7 @@ export const getAllPayments = async (req, res) => {
         }
       }
     ]);
-    res.json({ success: true, data: payments, pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) }, stats: stats[0] || {} });
+    res.json({ success: true, data: [...awaiting, ...payments], pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) }, stats: stats[0] || {} });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch payments' });
   }

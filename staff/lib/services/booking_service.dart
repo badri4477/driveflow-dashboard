@@ -28,15 +28,26 @@ class BookingService {
     return items;
   }
 
+  /// Last merchant booking list, kept in memory so Home / Orders can show it
+  /// instantly when reopened and refresh quietly in the background.
+  static List<BookingSummary>? _merchantBookingsCache;
+  static List<BookingSummary>? get cachedMerchantBookings =>
+      _merchantBookingsCache == null
+      ? null
+      : List<BookingSummary>.of(_merchantBookingsCache!);
+
   /// Merchant bookings — same endpoint as web (`GET /bookings`).
   Future<List<BookingSummary>> getMerchantBookings() async {
+    List<BookingSummary> list;
     try {
       final data = await _api.getAny(ApiEndpoints.bookings);
-      return _parseBookingList(data);
+      list = _parseBookingList(data);
     } catch (_) {
       final data = await _api.getAny(ApiEndpoints.myBookings);
-      return _parseBookingList(data);
+      list = _parseBookingList(data);
     }
+    _merchantBookingsCache = list;
+    return List<BookingSummary>.of(list);
   }
 
   Future<List<BookingSummary>> getMyBookings() async {
@@ -130,14 +141,20 @@ class BookingService {
     await _api.postJson('/approvals', body: data);
   }
 
-  Future<void> uploadCarWashBeforePhotos(String bookingId, List<String> urls) async {
+  Future<void> uploadCarWashBeforePhotos(
+    String bookingId,
+    List<String> urls,
+  ) async {
     await _api.putJson(
       ApiEndpoints.carWashBeforePhotos(bookingId),
       body: {'photos': urls},
     );
   }
 
-  Future<void> uploadCarWashAfterPhotos(String bookingId, List<String> urls) async {
+  Future<void> uploadCarWashAfterPhotos(
+    String bookingId,
+    List<String> urls,
+  ) async {
     await _api.putJson(
       ApiEndpoints.carWashAfterPhotos(bookingId),
       body: {'photos': urls},
@@ -163,11 +180,8 @@ class BookingService {
     if (price != null) body['price'] = price;
     if (image != null) body['image'] = image;
     if (notes != null) body['notes'] = notes;
-    
-    await _api.putJson(
-      ApiEndpoints.batteryTireApproval(id),
-      body: body,
-    );
+
+    await _api.putJson(ApiEndpoints.batteryTireApproval(id), body: body);
   }
 
   Future<void> addWarranty(
@@ -183,10 +197,7 @@ class BookingService {
       'warrantyMonths': warrantyMonths,
     };
     if (image != null) body['image'] = image;
-    
-    await _api.putJson(
-      ApiEndpoints.addWarranty(id),
-      body: body,
-    );
+
+    await _api.putJson(ApiEndpoints.addWarranty(id), body: body);
   }
 }

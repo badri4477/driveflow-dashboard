@@ -144,10 +144,7 @@ class _CenterNavAction extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
 
-  const _CenterNavAction({
-    required this.isActive,
-    required this.onTap,
-  });
+  const _CenterNavAction({required this.isActive, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +168,7 @@ class _CenterNavAction extends StatelessWidget {
             onTap();
           },
           borderRadius: BorderRadius.circular(999),
-            child: const Icon(Icons.home_rounded, color: Colors.white, size: 30),
+          child: const Icon(Icons.home_rounded, color: Colors.white, size: 30),
         ),
       ),
     );

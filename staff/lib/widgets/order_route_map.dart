@@ -156,10 +156,7 @@ class _OrderRouteMapState extends State<OrderRouteMap> {
           .whereType<List>()
           .where((c) => c.length >= 2)
           .map(
-            (c) => LatLng(
-              (c[1] as num).toDouble(),
-              (c[0] as num).toDouble(),
-            ),
+            (c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()),
           )
           .toList();
     } catch (_) {
@@ -168,11 +165,7 @@ class _OrderRouteMapState extends State<OrderRouteMap> {
   }
 
   void _fitToRoute() {
-    final points = <LatLng>[
-      ..._routePoints,
-      ?_origin,
-      ?_dest,
-    ];
+    final points = <LatLng>[..._routePoints, ?_origin, ?_dest];
     if (points.isEmpty) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_mapReady) return;

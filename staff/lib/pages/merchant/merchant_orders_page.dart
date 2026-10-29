@@ -7,6 +7,9 @@ import '../../utils/merchant_booking_filters.dart';
 import '../../widgets/global_sync_refresh.dart';
 import '../../widgets/merchant/merchant_nav.dart';
 import '../../core/app_colors.dart';
+import '../../widgets/states/status_feedback.dart';
+import '../../widgets/states/skeleton.dart';
+import '../../widgets/states/state_view.dart';
 
 class MerchantOrdersPage extends StatefulWidget {
   const MerchantOrdersPage({super.key});
@@ -21,6 +24,7 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
   final TextEditingController _searchController = TextEditingController();
   List<BookingSummary> _bookings = [];
   bool _isLoading = true;
+  String? _loadError;
   String _filter = 'active';
   String _searchQuery = '';
   bool _appliedInitialArgs = false;
@@ -28,6 +32,12 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
   @override
   void initState() {
     super.initState();
+    // Show the last list right away; _load then refreshes silently.
+    final cached = BookingService.cachedMerchantBookings;
+    if (cached != null) {
+      _bookings = cached;
+      _isLoading = false;
+    }
     _load();
     _socketService.on('bookingUpdated', _onBookingSocketEvent);
     _socketService.on('bookingCreated', _onBookingSocketEvent);
@@ -69,7 +79,12 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
     final shouldShowFullLoading = _bookings.isEmpty && !silent;
 
     if (shouldShowFullLoading) {
-      if (mounted) setState(() => _isLoading = true);
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _loadError = null;
+        });
+      }
     }
 
     try {
@@ -78,15 +93,23 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
         setState(() {
           _bookings = data;
           _isLoading = false;
+          _loadError = null;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        messenger?.showSnackBar(
-          const SnackBar(content: Text('Failed to load orders')),
-        );
+        // Keep showing the list if there is one; only an empty page
+        // gets the full error state.
+        setState(() {
+          _isLoading = false;
+          if (_bookings.isEmpty) {
+            _loadError =
+                'Failed to load orders. Check your connection and try again.';
+          }
+        });
+        if (_bookings.isNotEmpty) {
+          StatusFeedback.error('Could not refresh orders');
+        }
       }
     }
   }
@@ -135,7 +158,10 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
               height: 56,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 children: [
                   _FilterChip(
                     label: 'Active',
@@ -152,7 +178,8 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
                   _FilterChip(
                     label: 'Pending Bills',
                     selected: _filter == 'pending-bills',
-                    onSelected: (_) => setState(() => _filter = 'pending-bills'),
+                    onSelected: (_) =>
+                        setState(() => _filter = 'pending-bills'),
                   ),
                   const SizedBox(width: 8),
                   _FilterChip(
@@ -167,10 +194,19 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
               child: RefreshIndicator(
                 onRefresh: _load,
                 child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const SkeletonList()
+                    : _loadError != null
+                    ? StateView.error(
+                        message: _loadError,
+                        onRetry: _load,
+                        refreshable: true,
+                      )
                     : visible.isEmpty
-                    ? const Center(
-                        child: Text('No orders found matching your criteria.'),
+                    ? const StateView.empty(
+                        title: 'No orders found',
+                        message: 'No orders match your current filters.',
+                        icon: Icons.receipt_long_outlined,
+                        refreshable: true,
                       )
                     : ListView.builder(
                         padding: const EdgeInsets.all(16),
@@ -180,7 +216,8 @@ class _MerchantOrdersPageState extends State<MerchantOrdersPage> {
                           return _OrderCard(
                             booking: booking,
                             onTap: () {
-                              Navigator.of(context).pushReplacementNamed(
+                              // Push (not replace) so Back returns to Orders.
+                              Navigator.of(context).pushNamed(
                                 '/merchant-order-detail',
                                 arguments: booking.id,
                               );
@@ -409,8 +446,10 @@ class _OrderCard extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     booking.date != null
-                        ? DateTime.tryParse(booking.date!)?.toLocal().toString().split(' ').first ??
-                            booking.date!
+                        ? DateTime.tryParse(
+                                booking.date!,
+                              )?.toLocal().toString().split(' ').first ??
+                              booking.date!
                         : 'N/A',
                     style: TextStyle(
                       fontSize: 13,

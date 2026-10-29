@@ -141,7 +141,9 @@ class _ThemeOptionChip extends StatelessWidget {
                     ),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: selected ? accent.withValues(alpha: 0.5) : Colors.transparent,
+                color: selected
+                    ? accent.withValues(alpha: 0.5)
+                    : Colors.transparent,
                 width: 1.2,
               ),
             ),

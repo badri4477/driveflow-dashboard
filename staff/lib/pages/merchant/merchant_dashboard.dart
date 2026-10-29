@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -8,9 +10,11 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/booking_service.dart';
 import '../../services/notification_service.dart';
+import '../../utils/merchant_booking_filters.dart';
 import '../../utils/post_login_permissions.dart';
 import '../../widgets/global_sync_refresh.dart';
 import '../../widgets/merchant/merchant_nav.dart';
+import '../../widgets/states/skeleton.dart';
 
 class MerchantDashboardPage extends StatefulWidget {
   const MerchantDashboardPage({super.key});
@@ -36,7 +40,32 @@ class _MerchantDashboardPageState extends State<MerchantDashboardPage> {
   @override
   void initState() {
     super.initState();
+    _showCachedFirst();
     _init();
+  }
+
+  /// Paint immediately from the last bookings + the stored user so reopening
+  /// Home doesn't flash a skeleton; _init refreshes in the background.
+  Future<void> _showCachedFirst() async {
+    final cached = BookingService.cachedMerchantBookings;
+    if (cached == null) return;
+    final user = await _authService.getCurrentUser();
+    if (!mounted || user == null || _user != null) return;
+    cached.sort((a, b) {
+      final aDate =
+          DateTime.tryParse(a.createdAt ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate =
+          DateTime.tryParse(b.createdAt ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return bDate.compareTo(aDate);
+    });
+    setState(() {
+      _user = user;
+      _stats = computeMerchantStats(cached);
+      _recentOrders = cached.take(3).toList();
+      _isLoading = false;
+    });
   }
 
   String get _greeting {
@@ -58,12 +87,24 @@ class _MerchantDashboardPageState extends State<MerchantDashboardPage> {
       setState(() => _isLoading = true);
     }
 
+    // Permission prompts shouldn't hold up the dashboard.
+    unawaited(PostLoginPermissions.request());
+
     try {
-      await PostLoginPermissions.request();
-      final user = await _authService.getCurrentUser(forceRefresh: true);
-      final stats = await _bookingService.getMerchantStats();
-      final bookings = await _bookingService.getMerchantBookings();
-      final notifications = await _notificationService.listMyNotifications();
+      // Fetch in parallel, and download bookings ONCE — stats are computed
+      // from the same list (getMerchantStats used to re-download it).
+      final results = await Future.wait<Object?>([
+        _authService.getCurrentUser(forceRefresh: true),
+        _bookingService.getMerchantBookings(),
+        _notificationService
+            .listMyNotifications()
+            .then<Object?>((n) => n)
+            .catchError((Object _) => null),
+      ]);
+      final user = results[0] as dynamic;
+      final bookings = results[1] as List<BookingSummary>;
+      final notifications = (results[2] as List?) ?? const [];
+      final stats = computeMerchantStats(bookings);
       bookings.sort((a, b) {
         final aDate =
             DateTime.tryParse(a.createdAt ?? '') ??
@@ -77,7 +118,9 @@ class _MerchantDashboardPageState extends State<MerchantDashboardPage> {
       setState(() {
         _user = user;
         _stats = stats;
-        _recentOrders = bookings.take(5).toList();
+        _recentOrders = bookings
+            .take(3)
+            .toList(); // home shows max 3 (app + web)
         _unreadNotifications = notifications.where((n) => !n.isRead).length;
         _isLoading = false;
       });
@@ -144,7 +187,7 @@ class _MerchantDashboardPageState extends State<MerchantDashboardPage> {
           ),
         ],
         body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const SkeletonList(itemCount: 5, showLeading: false)
             : RefreshIndicator(
                 onRefresh: _init,
                 child: ListView(
@@ -213,10 +256,8 @@ class _MerchantDashboardPageState extends State<MerchantDashboardPage> {
                           ),
                         ),
                         TextButton(
-                          onPressed: () => Navigator.pushNamed(
-                            context,
-                            '/merchant-orders',
-                          ),
+                          onPressed: () =>
+                              Navigator.pushNamed(context, '/merchant-orders'),
                           child: const Text('See all'),
                         ),
                       ],

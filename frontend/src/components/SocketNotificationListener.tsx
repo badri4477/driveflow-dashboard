@@ -141,6 +141,12 @@ const SocketNotificationListener = () => {
       const orderNum = data.orderNumber || data._id.toString().slice(-6).toUpperCase();
       const status = (data.status || 'updated').replace(/_/g, ' ');
 
+      // CREATED isn't a status change — bookingCreated / the booking flow
+      // already confirm it, so this would just be a duplicate toast.
+      if (String(data.status || '').toUpperCase() === 'CREATED') {
+        return;
+      }
+
       if (!shouldShowBookingUpdateToast(String(data._id), String(data.status || ''))) {
         return;
       }
@@ -169,7 +175,11 @@ const SocketNotificationListener = () => {
       if (!data || !data._id) return;
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      
+
+      // The customer just made this booking and the booking flow shows its
+      // own confirmation; this toast is for admin/merchant/staff.
+      if (userRole === 'customer') return;
+
       const orderNum = data.orderNumber || data._id.toString().slice(-6).toUpperCase();
       toast.success(`New Booking`, {
         description: `New booking #${orderNum} has been created!`,
@@ -254,6 +264,7 @@ const SocketNotificationListener = () => {
 
       if (userRole === 'customer') {
         toast(title, {
+          id: `approval_${approvalId}`, // dedupe repeat deliveries
           description: message,
           duration: 10000, // Show longer
           action: {
@@ -283,6 +294,7 @@ const SocketNotificationListener = () => {
         });
       } else {
         toast.info(title, {
+          id: `approval_${approvalId}`,
           description: message,
           action: {
             label: 'View',

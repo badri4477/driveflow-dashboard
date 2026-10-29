@@ -3,6 +3,7 @@ import '../../services/auth_service.dart';
 import '../../core/app_colors.dart';
 import '../app_side_nav_logo.dart';
 import '../pill_bottom_bar.dart';
+import '../states/status_feedback.dart';
 
 class MerchantNavItem {
   final IconData icon;
@@ -84,17 +85,11 @@ class _MerchantScaffoldState extends State<MerchantScaffold> {
     try {
       await _authService.updateProfile({'isShopOpen': value});
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(value ? 'Shop is now Open' : 'Shop is now Closed'),
-        ),
-      );
+      StatusFeedback.auto(value ? 'Shop is now Open' : 'Shop is now Closed');
     } catch (_) {
       if (!mounted) return;
       setState(() => _isShopOpen = previousStatus);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to update shop status')),
-      );
+      StatusFeedback.auto('Failed to update shop status');
     }
   }
 
@@ -102,40 +97,52 @@ class _MerchantScaffoldState extends State<MerchantScaffold> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    // Tabs switch with pushReplacementNamed, so each tab is the only route.
+    // Back / edge-swipe: from any tab → Home; only Home closes the app.
+    final isHome =
+        ModalRoute.of(context)?.settings.name == '/merchant-dashboard';
+    final canLeave = isHome || Navigator.of(context).canPop();
 
-    return Scaffold(
-      extendBody: true,
-      backgroundColor: isDark
-          ? AppColors.backgroundPrimary
-          : const Color(0xFFF3F4F6),
-      appBar: AppBar(
-        elevation: 0,
+    return PopScope(
+      canPop: canLeave,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        Navigator.of(context).pushReplacementNamed('/merchant-dashboard');
+      },
+      child: Scaffold(
+        extendBody: true,
         backgroundColor: isDark
             ? AppColors.backgroundPrimary
             : const Color(0xFFF3F4F6),
-        foregroundColor: isDark ? Colors.white : Colors.black,
-        title: Text(
-          widget.title,
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w800,
-            color: isDark ? Colors.white : const Color(0xFF1E3A8A),
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: isDark
+              ? AppColors.backgroundPrimary
+              : const Color(0xFFF3F4F6),
+          foregroundColor: isDark ? Colors.white : Colors.black,
+          title: Text(
+            widget.title,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: isDark ? Colors.white : const Color(0xFF1E3A8A),
+            ),
           ),
+          actions: widget.actions,
         ),
-        actions: widget.actions,
+        drawer: MerchantDrawer(
+          filteredItems: _filteredItems,
+          isShopOpen: _isShopOpen,
+          onShopStatusChanged: _toggleShopStatus,
+        ),
+        body: Padding(
+          padding: const EdgeInsets.only(bottom: 96),
+          child: widget.body,
+        ),
+        bottomNavigationBar: _filteredItems.isEmpty
+            ? null
+            : MerchantBottomNav(filteredItems: _filteredItems),
+        floatingActionButton: widget.floatingActionButton,
       ),
-      drawer: MerchantDrawer(
-        filteredItems: _filteredItems,
-        isShopOpen: _isShopOpen,
-        onShopStatusChanged: _toggleShopStatus,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.only(bottom: 96),
-        child: widget.body,
-      ),
-      bottomNavigationBar: _filteredItems.isEmpty
-          ? null
-          : MerchantBottomNav(filteredItems: _filteredItems),
-      floatingActionButton: widget.floatingActionButton,
     );
   }
 }
@@ -241,10 +248,7 @@ class MerchantDrawer extends StatelessWidget {
                       onTap: () {
                         Navigator.pop(context); // Close drawer
                         if (currentRoute != item.route) {
-                          Navigator.pushReplacementNamed(
-                            context,
-                            item.route,
-                          );
+                          Navigator.pushReplacementNamed(context, item.route);
                         }
                       },
                     ),
@@ -262,10 +266,7 @@ class MerchantDrawer extends StatelessWidget {
 class MerchantBottomNav extends StatelessWidget {
   final List<MerchantNavItem> filteredItems;
 
-  const MerchantBottomNav({
-    super.key,
-    required this.filteredItems,
-  });
+  const MerchantBottomNav({super.key, required this.filteredItems});
 
   @override
   Widget build(BuildContext context) {
@@ -310,14 +311,16 @@ class _MerchantNavTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isActive
-            ? (isDark ? AppColors.primaryBlue : const Color(0xFF2563EB))
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(999),
-      ),
+    // Pill colour lives on the ListTile itself (tileColor + shape) over a
+    // transparent Material — a coloured Container here hid the tap ripple and
+    // triggered Flutter's "ink splashes may be invisible" assertion.
+    return Material(
+      type: MaterialType.transparency,
       child: ListTile(
+        tileColor: isActive
+            ? (isDark ? AppColors.primaryBlue : const Color(0xFF2563EB))
+            : null,
+        shape: const StadiumBorder(),
         leading: Icon(
           icon,
           color: isActive
@@ -327,7 +330,7 @@ class _MerchantNavTile extends StatelessWidget {
         title: Text(
           label,
           style: TextStyle(
-            fontSize: 12,
+            fontSize: 14,
             color: isActive
                 ? Colors.white
                 : (isDark ? Colors.grey[300] : const Color(0xFF374151)),

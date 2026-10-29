@@ -5,6 +5,7 @@ import '../services/socket_service.dart';
 import '../core/storage.dart';
 import '../core/env.dart';
 import '../core/app_colors.dart';
+import '../widgets/states/skeleton.dart';
 
 const carzziGreetingMessage = '''Hi 👋 Hope you’re doing well! 
 Welcome to Carzzi Support Chat  🚗 
@@ -206,7 +207,7 @@ class _StaffChatPageState extends State<StaffChatPage> {
         children: [
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const SkeletonList(itemCount: 5, showLeading: false)
                 : _messages.isEmpty
                 ? Center(
                     child: Column(

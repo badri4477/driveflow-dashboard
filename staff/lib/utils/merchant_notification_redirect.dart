@@ -1,10 +1,6 @@
 /// Merchant notification navigation aligned with web [notificationUtils].
 class MerchantNotificationRedirect {
-  static String? routeFor({
-    String? type,
-    String? bookingId,
-    String? orderId,
-  }) {
+  static String? routeFor({String? type, String? bookingId, String? orderId}) {
     final normalizedType = (type ?? '').toLowerCase();
 
     if (bookingId != null && bookingId.isNotEmpty) {
@@ -45,11 +41,7 @@ class MerchantNotificationRedirect {
     return null;
   }
 
-  static bool isClickable({
-    String? type,
-    String? bookingId,
-    String? orderId,
-  }) {
+  static bool isClickable({String? type, String? bookingId, String? orderId}) {
     return routeFor(type: type, bookingId: bookingId, orderId: orderId) != null;
   }
 }

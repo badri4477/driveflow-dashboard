@@ -32,6 +32,7 @@ import {
 import * as turf from '@turf/turf';
 import { searchVehicleReference } from '@/services/vehicleReferenceService';
 import { sumBookingServicesSubtotal } from '@/lib/vehicleServicePricing';
+import { uploadService, invoiceFileName } from '@/services/uploadService';
 
 
 const BookingDetailPage: React.FC = () => {
@@ -112,7 +113,11 @@ const BookingDetailPage: React.FC = () => {
 
     // If merchant has uploaded a file, prioritize that
     if (booking.billing?.fileUrl) {
-      window.open(booking.billing.fileUrl, '_blank');
+      try {
+        await uploadService.downloadFile(booking.billing.fileUrl, invoiceFileName(booking.billing.fileUrl, booking.orderNumber));
+      } catch {
+        toast.error('Failed to download invoice');
+      }
       return;
     }
 
@@ -461,8 +466,16 @@ const BookingDetailPage: React.FC = () => {
   const handleStatusUpdate = async (newStatus: string) => {
     if (!booking) return;
     try {
-      await bookingService.updateBookingStatus(booking._id, newStatus);
-      setBooking({ ...booking, status: newStatus as Booking['status'] });
+      const updated = await bookingService.updateBookingStatus(booking._id, newStatus);
+      // Take server-side side effects too (e.g. admin DELIVERED marks the
+      // booking paid) — only scalar fields, so populated refs stay intact.
+      setBooking({
+        ...booking,
+        status: (updated?.status ?? newStatus) as Booking['status'],
+        paymentStatus: updated?.paymentStatus ?? booking.paymentStatus,
+        totalAmount: updated?.totalAmount ?? booking.totalAmount,
+        finalAmount: updated?.finalAmount ?? booking.finalAmount,
+      });
       toast.success(`Status updated to ${getStatusLabel(newStatus, booking.services || [])}`);
     } catch (error) {
       toast.error('Failed to update status');
@@ -922,7 +935,7 @@ const BookingDetailPage: React.FC = () => {
                 </div>
                 {booking.billing.fileUrl && (
                   <button
-                    onClick={() => window.open(booking.billing!.fileUrl, '_blank')}
+                    onClick={() => uploadService.downloadFile(booking.billing!.fileUrl!, invoiceFileName(booking.billing!.fileUrl!, booking.orderNumber)).catch(() => toast.error('Failed to download invoice'))}
                     className="w-full mt-2 py-2 bg-blue-50 text-blue-600 rounded-xl text-xs font-semibold hover:bg-blue-100 transition-colors flex items-center justify-center gap-2"
                   >
                     <Download className="w-4 h-4" />

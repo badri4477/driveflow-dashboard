@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class Env {
-  static const bool useProduction = true;
+  static const bool useProduction = false;
 
   static const String mapTileUrlTemplate = String.fromEnvironment(
     'MAP_TILE_URL_TEMPLATE',
@@ -12,11 +12,17 @@ class Env {
 
   static const List<String> mapTileSubdomains = <String>['a', 'b', 'c'];
 
+  // Physical phone over USB: run `adb reverse tcp:5000 tcp:5000` so the
+  // phone's localhost reaches this PC's backend. Set false for the emulator.
+  static bool isPhysicalDevice = true;
+
   static String get localBaseUrl {
     const fromEnv = String.fromEnvironment('LOCAL_BASE_URL');
     if (fromEnv.isNotEmpty) return fromEnv;
-    if (!kIsWeb && Platform.isAndroid) return 'http://10.0.2.2:5001';
-    return 'http://localhost:5001';
+    if (!kIsWeb && Platform.isAndroid && !isPhysicalDevice) {
+      return 'http://10.0.2.2:5000';
+    }
+    return 'http://localhost:5000';
   }
 
   static String get productionBaseUrl {

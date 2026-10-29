@@ -4,6 +4,8 @@ import '../../services/auth_service.dart';
 import '../../services/review_service.dart';
 import '../../widgets/global_sync_refresh.dart';
 import '../../widgets/merchant/merchant_nav.dart';
+import '../../widgets/states/skeleton.dart';
+import '../../widgets/states/state_view.dart';
 
 class MerchantFeedbackPage extends StatefulWidget {
   const MerchantFeedbackPage({super.key});
@@ -17,6 +19,7 @@ class _MerchantFeedbackPageState extends State<MerchantFeedbackPage> {
   final AuthService _authService = AuthService();
   List<Review> _reviews = [];
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -25,9 +28,15 @@ class _MerchantFeedbackPageState extends State<MerchantFeedbackPage> {
   }
 
   Future<void> _load() async {
-    if (mounted) setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
     try {
-      final user = await _authService.getCurrentUser(forceRefresh: true);
+      // Only the merchant id is needed — the stored user is enough.
+      final user = await _authService.getCurrentUser();
       if (user != null) {
         final data = await _service.getMerchantReviews(user.id);
         if (mounted) {
@@ -41,10 +50,11 @@ class _MerchantFeedbackPageState extends State<MerchantFeedbackPage> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to load feedback')),
-        );
+        setState(() {
+          _isLoading = false;
+          _loadError =
+              'Failed to load feedback. Check your connection and try again.';
+        });
       }
     }
   }
@@ -69,14 +79,19 @@ class _MerchantFeedbackPageState extends State<MerchantFeedbackPage> {
         body: RefreshIndicator(
           onRefresh: _load,
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
+              ? const SkeletonList()
+              : _loadError != null
+              ? StateView.error(
+                  message: _loadError,
+                  onRetry: _load,
+                  refreshable: true,
+                )
               : _reviews.isEmpty
-              ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: const [
-                    SizedBox(height: 120),
-                    Center(child: Text('No feedback yet')),
-                  ],
+              ? const StateView.empty(
+                  title: 'No feedback yet',
+                  message: 'Customer reviews will show up here.',
+                  icon: Icons.reviews_outlined,
+                  refreshable: true,
                 )
               : ListView(
                   padding: const EdgeInsets.all(16),
@@ -135,9 +150,7 @@ class _ReviewCard extends StatelessWidget {
       color: isDark ? const Color(0xFF1F2937) : Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: isDark ? Colors.grey[800]! : Colors.grey[200]!,
-        ),
+        side: BorderSide(color: isDark ? Colors.grey[800]! : Colors.grey[200]!),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),

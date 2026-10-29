@@ -40,6 +40,29 @@ class Vehicle {
 class VehicleService {
   final ApiClient _api = ApiClient();
 
+  /// Vehicle price-list row for a make/model (same endpoint the web uses for
+  /// the auto-filled pickup/drop price). Null if no match or on error.
+  Future<Map<String, dynamic>?> searchReference({
+    required String make,
+    required String model,
+    String? variant,
+    String? fuelType,
+  }) async {
+    final query = Uri(
+      queryParameters: {
+        'brand_name': make.trim(),
+        'model': model.trim(),
+        if ((variant ?? '').trim().isNotEmpty) 'variant': variant!.trim(),
+        if ((fuelType ?? '').trim().isNotEmpty) 'fuel_type': fuelType!.trim(),
+      },
+    ).query;
+    try {
+      return await _api.getJson('/vehicle-reference/search?$query');
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<Vehicle>> getVehicles() async {
     final response = await _api.getAny('/vehicles/all');
     if (response is List) {

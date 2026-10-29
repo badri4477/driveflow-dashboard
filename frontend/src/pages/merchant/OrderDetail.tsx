@@ -5,7 +5,8 @@ import { ArrowLeft, User as UserIcon, Calendar, Wrench, Car, AlertTriangle, MapP
 import { toast } from 'sonner';
 import { bookingService, Booking } from '../../services/bookingService';
 import { socketService } from '@/services/socket';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
+import { routingService } from '@/services/routingService';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -83,9 +84,48 @@ const OrderDetail: React.FC = () => {
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [staffLocation, setStaffLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [routeGeometry, setRouteGeometry] = useState<[number, number][]>([]);
   const [activeTab, setActiveTab] = useState<string>('overview');
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
+
+  // Where the staff member is heading: the customer until the vehicle is
+  // picked up, then the workshop (same rule as the staff app).
+  const routeDestination = (() => {
+    if (!booking) return null;
+    const atWorkshop = ['VEHICLE_PICKED', 'REACHED_MERCHANT', 'VEHICLE_AT_MERCHANT', 'SERVICE_STARTED', 'SERVICE_COMPLETED'];
+    const merchantLoc = (booking as any).merchant?.location;
+    const customerLoc = typeof booking.location === 'object' ? booking.location : null;
+    const loc = atWorkshop.includes(booking.status) && merchantLoc?.lat ? merchantLoc : customerLoc;
+    return loc?.lat && loc?.lng ? { lat: Number(loc.lat), lng: Number(loc.lng) } : null;
+  })();
+  // Refetch only when the staff moves ~10 m+ (4 decimal places), not on
+  // every GPS tick.
+  const routeKey = staffLocation && routeDestination
+    ? `${staffLocation.lat.toFixed(4)},${staffLocation.lng.toFixed(4)}>${routeDestination.lat},${routeDestination.lng}`
+    : '';
+
+  useEffect(() => {
+    if (!routeKey || !staffLocation || !routeDestination) {
+      setRouteGeometry([]);
+      return;
+    }
+    let cancelled = false;
+    routingService
+      .getRoute([staffLocation.lat, staffLocation.lng], [routeDestination.lat, routeDestination.lng])
+      .then((response) => {
+        const geometry = response.routes?.[0]?.geometry;
+        if (cancelled || !geometry || typeof geometry !== 'object') return;
+        setRouteGeometry(geometry.coordinates.map((c) => [c[1], c[0]] as [number, number]));
+      })
+      .catch(() => {
+        if (!cancelled) setRouteGeometry([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey]);
   const [isInitialTabSet, setIsInitialTabSet] = useState(false);
 
   const fetchBooking = useCallback(async (sourceTab?: string) => {
@@ -463,6 +503,14 @@ const OrderDetail: React.FC = () => {
                                                 </div>
                                             </Popup>
                                         </Marker>
+                                        {routeGeometry.length > 0 && (
+                                            <Polyline positions={routeGeometry} color="#2563eb" weight={4} opacity={0.85} />
+                                        )}
+                                        {routeDestination && (
+                                            <Marker position={[routeDestination.lat, routeDestination.lng]}>
+                                                <Popup>Destination</Popup>
+                                            </Marker>
+                                        )}
                                     </MapContainer>
                                 ) : (
                                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground">

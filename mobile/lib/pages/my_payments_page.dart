@@ -94,128 +94,129 @@ class _MyPaymentsPageState extends State<MyPaymentsPage> {
       entities: SyncEntities.payments,
       onSync: _load,
       child: PopScope(
-      canPop: Navigator.of(context).canPop(),
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil('/customer', (route) => false);
-      },
-      child: Scaffold(
-        backgroundColor: isDark ? Colors.black : Colors.white,
-        drawer: CustomerDrawer(currentRouteName: routeName),
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          leading: Builder(
-            builder: (context) => Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.28)
-                        : Colors.black.withValues(alpha: 0.16),
-                    width: 1.0,
+        canPop: Navigator.of(context).canPop(),
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          Navigator.of(
+            context,
+          ).pushNamedAndRemoveUntil('/customer', (route) => false);
+        },
+        child: Scaffold(
+          backgroundColor: isDark ? Colors.black : Colors.white,
+          drawer: CustomerDrawer(currentRouteName: routeName),
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            centerTitle: true,
+            leading: Builder(
+              builder: (context) => Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.28)
+                          : Colors.black.withValues(alpha: 0.16),
+                      width: 1.0,
+                    ),
                   ),
-                ),
-                child: IconButton(
-                  icon: Icon(
-                    Icons.menu,
-                    color: isDark ? Colors.white : Colors.black,
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.menu,
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                    tooltip: 'Menu',
+                    onPressed: () => Scaffold.of(context).openDrawer(),
                   ),
-                  tooltip: 'Menu',
-                  onPressed: () => Scaffold.of(context).openDrawer(),
                 ),
               ),
             ),
-          ),
-          title: Text(
-            'My Payments',
-            style: TextStyle(
-              color: isDark ? Colors.white : Colors.black,
-              fontWeight: FontWeight.w700,
+            title: Text(
+              'My Payments',
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontWeight: FontWeight.w700,
+              ),
             ),
+            actions: const [],
           ),
-          actions: const [],
-        ),
-        body: !context.watch<AuthProvider>().isAuthenticated
-            ? const GuestLoginPrompt(
-                title: 'Your payments',
-                message: 'Log in to view invoices and payment history.',
-              )
-            : Stack(
-          children: [
-            if (isDark)
-              Container(color: Colors.black)
-            else
-              Container(color: Colors.white),
-            RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  if (_loading)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 32),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 24),
-                      child: Column(
+          body: !context.watch<AuthProvider>().isAuthenticated
+              ? const GuestLoginPrompt(
+                  title: 'Your payments',
+                  message: 'Log in to view invoices and payment history.',
+                )
+              : Stack(
+                  children: [
+                    if (isDark)
+                      Container(color: Colors.black)
+                    else
+                      Container(color: Colors.white),
+                    RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView(
+                        padding: const EdgeInsets.all(16),
                         children: [
-                          Text(
-                            'Failed to load payments',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: Colors.white70),
-                          ),
-                          const SizedBox(height: 12),
-                          OutlinedButton(
-                            onPressed: _load,
-                            child: const Text('Retry'),
-                          ),
+                          if (_loading)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 32),
+                              child: Center(child: CircularProgressIndicator()),
+                            )
+                          else if (_error != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 24),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    'Failed to load payments',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _error!,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(color: Colors.white70),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  OutlinedButton(
+                                    onPressed: _load,
+                                    child: const Text('Retry'),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else if (_payments.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 24),
+                              child: Center(
+                                child: Text(
+                                  'No payments found',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(color: Colors.white),
+                                ),
+                              ),
+                            )
+                          else ...[
+                            for (final b in _payments)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _PaymentCard(
+                                  booking: b,
+                                  dateLabel: _formatDateTime(context, b.date),
+                                ),
+                              ),
+                          ],
                         ],
                       ),
-                    )
-                  else if (_payments.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 24),
-                      child: Center(
-                        child: Text(
-                          'No payments found',
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodyMedium?.copyWith(color: Colors.white),
-                        ),
-                      ),
-                    )
-                  else ...[
-                    for (final b in _payments)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _PaymentCard(
-                          booking: b,
-                          dateLabel: _formatDateTime(context, b.date),
-                        ),
-                      ),
+                    ),
                   ],
-                ],
-              ),
-            ),
-          ],
+                ),
         ),
       ),
-    ),
     );
   }
 }
@@ -258,14 +259,42 @@ class _PaymentCardState extends State<_PaymentCard> {
     return Icons.payments_outlined;
   }
 
+  // Same rule as web My Payments: final (post-discount/updated bill) amount
+  // first, then billing total, then the booked total.
+  num _displayAmount(Booking b) {
+    final finalAmount = b.finalAmount;
+    if (finalAmount != null && finalAmount > 0) return finalAmount;
+    final billingTotal = b.billing?.total ?? 0;
+    if (billingTotal > 0) return billingTotal;
+    return b.totalAmount;
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = widget.booking;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isPaid = b.paymentStatus == 'paid';
     final isCancelled = b.status.toUpperCase() == 'CANCELLED';
+    // Periodic/general services are billed after the service — inspection
+    // can add parts, so the amount is only an estimate until then.
+    final isAwaitingFinalBill =
+        !isPaid &&
+        !isCancelled &&
+        !b.services.any(
+          (s) => RegExp(
+            r'battery|tire|tyre|wash|essentials',
+          ).hasMatch((s.category ?? '').toLowerCase()),
+        ) &&
+        !const [
+          'SERVICE_COMPLETED',
+          'OUT_FOR_DELIVERY',
+          'DELIVERED',
+          'COMPLETED',
+        ].contains(b.status.toUpperCase());
     final statusText = isCancelled && !isPaid
         ? 'CANCELLED'
+        : isAwaitingFinalBill
+        ? 'DUE AFTER SERVICE'
         : (b.paymentStatus ?? 'pending').toUpperCase();
     final accent = isPaid
         ? const Color(0xFF22C55E)
@@ -439,7 +468,7 @@ class _PaymentCardState extends State<_PaymentCard> {
             Row(
               children: [
                 Text(
-                  '₹${b.totalAmount}',
+                  '${isAwaitingFinalBill ? 'Est. ' : ''}₹${_displayAmount(b)}',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w900,
                     color: isDark
@@ -450,7 +479,8 @@ class _PaymentCardState extends State<_PaymentCard> {
                 const Spacer(),
                 if (b.paymentStatus != 'paid' &&
                     b.totalAmount > 0 &&
-                    !isCancelled)
+                    !isCancelled &&
+                    !isAwaitingFinalBill)
                   Padding(
                     padding: const EdgeInsets.only(right: 12),
                     child: Container(

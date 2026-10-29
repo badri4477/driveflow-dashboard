@@ -158,14 +158,7 @@ const StatusControlPanel: React.FC<StatusControlPanelProps> = ({ booking, onUpda
                   Move to {nextActionLabel}
               </button>
             </div>
-        ) : (
-            booking.status === 'SERVICE_STARTED' && (
-                <div className="flex-1 p-3 bg-blue-50 border border-blue-100 rounded-lg text-blue-700 text-xs md:text-sm flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>Complete <strong>QC Check</strong> and <strong>Health</strong>, then use <strong>Billing</strong> to upload the bill and complete service.</span>
-                </div>
-            )
-        )}
+        ) : null}
         
 
 
