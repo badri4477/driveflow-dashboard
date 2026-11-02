@@ -2,7 +2,7 @@ import ApprovalRequest from '../models/ApprovalRequest.js';
 import Booking from '../models/Booking.js';
 import User from '../models/User.js';
 import { getIO, emitChatMessage } from '../socket.js';
-import { emitBookingUpdate, calculateServicesTotal } from './bookingController.js';
+import { emitBookingUpdate, resolveBookingBaseServiceTotal } from './bookingController.js';
 import { emitEntitySync } from '../utils/syncService.js';
 
 import { sendPushToUser } from '../utils/pushService.js';
@@ -418,7 +418,7 @@ export const updateApprovalStatus = async (req, res) => {
           });
 
           // 3. Recalculate totalAmount
-          const { total: servicesTotal } = await calculateServicesTotal(booking.services, booking.vehicle, booking.selectedBrands, booking.serviceQuantities);
+          const servicesTotal = await resolveBookingBaseServiceTotal(booking);
 
           const partsTotal = booking.parts.reduce((acc, part) => acc + (Number(part.price) * Number(part.quantity)), 0);
 
@@ -469,7 +469,7 @@ export const updateApprovalStatus = async (req, res) => {
           booking.billing.labourCost = (booking.billing.labourCost || 0) + Number(amount);
           
           // Recalculate billing total
-          const { total: servicesTotal } = await calculateServicesTotal(booking.services, booking.vehicle, booking.selectedBrands, booking.serviceQuantities);
+          const servicesTotal = await resolveBookingBaseServiceTotal(booking);
 
           const partsTotal = booking.billing.partsTotal || 0;
           const labourCost = booking.billing.labourCost;

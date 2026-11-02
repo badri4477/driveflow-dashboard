@@ -16,6 +16,7 @@ import '../services/socket_service.dart';
 import '../widgets/states/status_feedback.dart';
 import '../widgets/states/skeleton.dart';
 import '../widgets/states/state_view.dart';
+import '../widgets/states/countdown_redirect_dialog.dart';
 
 class StaffOrderDetailPage extends StatefulWidget {
   const StaffOrderDetailPage({super.key});
@@ -275,26 +276,11 @@ class _StaffOrderDetailPageState extends State<StaffOrderDetailPage> {
         await _service.verifyDeliveryOtp(booking.id, otp);
         await _load(booking.id);
         if (!mounted) return;
-        StatusFeedback.auto('Delivery confirmed');
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Order Completed'),
-            content: const Text('Order has been marked as completed.'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    '/home',
-                    (route) => false,
-                  );
-                },
-                child: const Text('Go to Home'),
-              ),
-            ],
-          ),
+        await showCountdownRedirect(
+          context,
+          title: 'Order Completed',
+          message: 'Delivery confirmed. The order has been marked as completed.',
+          route: '/home',
         );
         return;
       }

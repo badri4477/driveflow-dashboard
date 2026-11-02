@@ -177,8 +177,14 @@ const OrderDetail: React.FC = () => {
       
       // Set initial tab based on booking state ONLY ONCE on first load
       if (!isInitialTabSet) {
+        const billingStage =
+          !!data.billing?.fileUrl ||
+          !!data.healthSavedAt ||
+          ['SERVICE_COMPLETED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(data.status);
         if (data.batteryTire?.isBatteryTireService) {
           setActiveTab('overview');
+        } else if (billingStage) {
+          setActiveTab('billing');
         } else if (data.qc?.completedAt) {
           setActiveTab('health');
         } else if (data.inspection?.completedAt) {

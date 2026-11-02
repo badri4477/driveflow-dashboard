@@ -151,3 +151,11 @@ export function sumBookingServicesSubtotal(
     return sum + (unitPrice * qty);
   }, 0);
 }
+
+/** Merchant-set base service amount for a booking, or null when the catalogue price applies. */
+export function getBaseServiceOverride(booking: { baseServiceAmountOverride?: number | null } | null | undefined): number | null {
+  const value = booking?.baseServiceAmountOverride;
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}

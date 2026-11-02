@@ -239,6 +239,9 @@ const bookingSchema = mongoose.Schema(
     // Set when the merchant saves health stats on this order (see
     // updateBookingDetails). Health values themselves live on the vehicle.
     healthSavedAt: { type: Date },
+    // Merchant-entered base service price (set during inspection). When set
+    // it replaces the catalogue services total in every total recalculation.
+    baseServiceAmountOverride: { type: Number, default: null },
     manualPayment: {
       markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       markedAt: { type: Date },

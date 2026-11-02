@@ -119,6 +119,20 @@ const PaymentStatusPage: React.FC = () => {
     };
   }, [routeState.success, searchParams]);
 
+  // After a successful payment, open the booking automatically in 3 seconds.
+  const autoRedirect = !status.loading && status.success && !!status.bookingId && !!status.primaryTo;
+  const [secondsLeft, setSecondsLeft] = useState(3);
+  useEffect(() => {
+    if (!autoRedirect) return;
+    setSecondsLeft(3);
+    const tick = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    const go = setTimeout(() => navigate(status.primaryTo!, { replace: true }), 3000);
+    return () => {
+      clearInterval(tick);
+      clearTimeout(go);
+    };
+  }, [autoRedirect, status.primaryTo, navigate]);
+
   const primaryLabel = status.loading
     ? 'Please wait'
     : status.success
@@ -161,6 +175,11 @@ const PaymentStatusPage: React.FC = () => {
 
           <h1 className="text-2xl font-bold text-foreground">{status.title}</h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">{status.message}</p>
+          {autoRedirect && (
+            <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">
+              Opening your booking in {secondsLeft}s…
+            </p>
+          )}
 
           <div className="mt-8 flex w-full flex-col gap-3">
             <button

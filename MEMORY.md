@@ -35,6 +35,7 @@
 - Merchant app back gesture: from any tab → Home (PopScope in MerchantScaffold); only Home exits. Orders open order detail with pushNamed. Date: 2026-10-29
 - Merchant app speed: bookings fetched once per Home load (stats computed locally), parallel fetches, in-memory `BookingService.cachedMerchantBookings` for instant Home/Orders. Date: 2026-10-29
 - Hidden in merchant UIs (code kept): Add New Discovery, Request Extra Cost Approval, Mark Delay / Hold, "Complete QC Check and Health…" hint, Customer Notes card. Recent Orders on merchant home = max 3 (web + app). Date: 2026-10-29
+- Base service override: merchant edits the base service amount in the Inspection tab (web `BaseServiceAmountEditor`, staff app `_buildBaseAmountEditor`); sent as `baseServiceAmount` (null = reset) to `PUT /bookings/:id/details`, stored as `booking.baseServiceAmountOverride`. Backend `resolveBookingBaseServiceTotal` uses it in every total recalculation (details billing/parts, approvals), so totalAmount/finalAmount/payments/invoice follow. Locked from SERVICE_COMPLETED or paid. Customer web + mobile, admin, and BillUploadPanel display it. Date: 2026-10-30
 - Mobile testing setup: staff app uses `http://localhost:5000` + `adb reverse tcp:5000 tcp:5000` on a physical phone (`Env.isPhysicalDevice`); cleartext only in the debug manifest. Testing-mode `skipOtp` is handled on phone/email login in both apps. Date: 2026-10-29
 
 ## 7. Known Issues
@@ -53,4 +54,4 @@
 - Editing `paymentController.getAllPayments` — the live route uses cashfreePaymentController.
 
 ## 12. Last Updated
-2026-10-29
+2026-10-30

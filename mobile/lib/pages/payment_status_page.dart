@@ -10,6 +10,8 @@ class PaymentStatusPage extends StatefulWidget {
   final String message;
   final String? primaryButtonLabel;
   final String? primaryRoute;
+  /// Arguments passed to [primaryRoute] (e.g. a booking id for /track).
+  final Object? primaryArguments;
   final bool clearStackOnPrimary;
   final bool popOnPrimary;
   final VoidCallback? onPrimaryPressed;
@@ -26,6 +28,7 @@ class PaymentStatusPage extends StatefulWidget {
     required this.message,
     this.primaryButtonLabel,
     this.primaryRoute,
+    this.primaryArguments,
     this.clearStackOnPrimary = false,
     this.popOnPrimary = false,
     this.onPrimaryPressed,
@@ -42,7 +45,7 @@ class PaymentStatusPage extends StatefulWidget {
 
 class _PaymentStatusPageState extends State<PaymentStatusPage>
     with SingleTickerProviderStateMixin {
-  static const _redirectDelay = Duration(seconds: 2);
+  static const _redirectDelay = Duration(seconds: 3);
 
   late final AnimationController _controller;
   late final Animation<double> _cardOpacity;
@@ -58,11 +61,27 @@ class _PaymentStatusPageState extends State<PaymentStatusPage>
     }
     if (widget.primaryRoute != null) {
       if (widget.clearStackOnPrimary) {
-        Navigator.of(
+        final navigator = Navigator.of(
           context,
-        ).pushNamedAndRemoveUntil(widget.primaryRoute!, (route) => false);
+        );
+        if (widget.primaryArguments != null) {
+          // Detail page (e.g. /track): reset to Home underneath so Back works.
+          navigator.pushNamedAndRemoveUntil('/customer', (route) => false);
+          navigator.pushNamed(
+            widget.primaryRoute!,
+            arguments: widget.primaryArguments,
+          );
+        } else {
+          navigator.pushNamedAndRemoveUntil(
+            widget.primaryRoute!,
+            (route) => false,
+          );
+        }
       } else {
-        Navigator.of(context).pushReplacementNamed(widget.primaryRoute!);
+        Navigator.of(context).pushReplacementNamed(
+          widget.primaryRoute!,
+          arguments: widget.primaryArguments,
+        );
       }
       return;
     }

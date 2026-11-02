@@ -42,7 +42,7 @@ import { SmoothMarker } from '@/components/SmoothMarker';
 import * as turf from '@turf/turf';
 import { Vehicle } from '@/services/vehicleService';
 import { searchVehicleReference } from '@/services/vehicleReferenceService';
-import { sumBookingServicesSubtotal } from '@/lib/vehicleServicePricing';
+import { sumBookingServicesSubtotal, getBaseServiceOverride } from '@/lib/vehicleServicePricing';
 import type { Service } from '@/services/serviceService';
 import { cn } from '@/lib/utils';
 
@@ -390,7 +390,17 @@ const TrackServicePage: React.FC = () => {
         fetchPendingApprovals();
       });
 
+      // Safety net for missed live updates (sleep, network drop): re-fetch
+      // when the tab becomes visible again or the socket reconnects.
+      const refetchIfVisible = () => {
+        if (document.visibilityState === 'visible') fetchOrder();
+      };
+      document.addEventListener('visibilitychange', refetchIfVisible);
+      socketService.on('connect', refetchIfVisible);
+
       return () => {
+        document.removeEventListener('visibilitychange', refetchIfVisible);
+        socketService.off('connect', refetchIfVisible);
         socketService.leaveRoom(`booking_${id}`);
         socketService.off('liveLocation');
         socketService.off('nearbyStaff');
@@ -1312,6 +1322,12 @@ const TrackServicePage: React.FC = () => {
               </h2>
               
               <div className="space-y-3 mb-6">
+                {order.billing?.invoiceNumber && (
+                  <div className="flex items-baseline justify-between pb-3 mb-1 border-b border-border">
+                    <span className="text-sm text-muted-foreground">Invoice No.</span>
+                    <span className="text-base font-semibold text-foreground tabular-nums">{order.billing?.invoiceNumber}</span>
+                  </div>
+                )}
                 {(order.billing && (order.billing.total > 0 || order.billing.invoiceNumber || order.billing.fileUrl)) || (order.pickupDropPrice && order.pickupDropPrice > 0) ? (
                   <>
                     {(() => {
@@ -1330,8 +1346,8 @@ const TrackServicePage: React.FC = () => {
                       const pickup = order.billing?.pickupDropPrice || order.pickupDropPrice || 0;
                       const discount = order.discountAmount || 0;
                       
-                      let baseAmount = servicesTotal;
-                      if (baseAmount === 0) {
+                      let baseAmount = getBaseServiceOverride(order) ?? servicesTotal;
+                      if (baseAmount === 0 && getBaseServiceOverride(order) === null) {
                         // Fallback logic
                         const rawTotal = order.totalAmount || 0;
                         baseAmount = Math.max(0, rawTotal - parts - labour - gst - pickup);
@@ -1389,12 +1405,17 @@ const TrackServicePage: React.FC = () => {
                         ? order.services.filter((s): s is Service => typeof s === 'object' && s !== null)
                         : []) as Service[];
                       const subtotalFromVehicle =
-                        serviceList.length > 0
+                        getBaseServiceOverride(order) ?? (serviceList.length > 0
                           ? sumBookingServicesSubtotal(serviceList, vehicleRef, order.selectedBrands, order.serviceQuantities)
-                          : order.totalAmount;
+                          : order.totalAmount);
                       return (
                         <div className="flex justify-between text-sm text-muted-foreground">
-                          <span>{isGeneralService ? 'Base Service Amount' : 'Subtotal'}</span>
+                          <span>
+                            {isGeneralService ? 'Base Service Amount' : 'Subtotal'}
+                            {isGeneralService && getBaseServiceOverride(order) === null && (
+                              <span className="block text-xs">Estimated price — final amount may change after inspection</span>
+                            )}
+                          </span>
                           <span>₹{subtotalFromVehicle}</span>
                         </div>
                       );
@@ -1421,12 +1442,6 @@ const TrackServicePage: React.FC = () => {
                   <span>Status</span>
                   <span className="capitalize">{order.paymentStatus}</span>
                 </div>
-                {order.billing?.invoiceNumber && (
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>Invoice #</span>
-                    <span>{order.billing?.invoiceNumber}</span>
-                  </div>
-                )}
                 {isCarWashService && order.paymentStatus === 'pending' && (
                   <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
                     <p className="text-sm text-orange-700 font-medium">

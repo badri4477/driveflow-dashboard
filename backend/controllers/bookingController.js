@@ -397,6 +397,16 @@ export const calculateServicesTotal = async (serviceIds, vehicleId, selectedBran
   }
 };
 
+/** Base service total for an existing booking: merchant override if set, else catalogue price. */
+export const resolveBookingBaseServiceTotal = async (booking) => {
+  const override = booking.baseServiceAmountOverride;
+  if (override !== null && override !== undefined && Number.isFinite(Number(override))) {
+    return Number(override);
+  }
+  const { total } = await calculateServicesTotal(booking.services, booking.vehicle, booking.selectedBrands, booking.serviceQuantities);
+  return total;
+};
+
 const formatTo12HourSlot = (date) => {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Kolkata',
@@ -2388,7 +2398,8 @@ export const updateBookingDetails = async (req, res) => {
     qc,
     billing,
     revisit,
-    healthSaved
+    healthSaved,
+    baseServiceAmount
   } = req.body;
 
   try {
@@ -2483,12 +2494,37 @@ export const updateBookingDetails = async (req, res) => {
         Object.assign(booking.qc, qc);
         booking.markModified('qc');
       }
+      // Merchant override of the base service amount (inspection step).
+      // null/'' clears it back to the catalogue price.
+      let baseOverrideChanged = false;
+      if (baseServiceAmount !== undefined) {
+        if (req.user.role !== 'admin' && !isAssignedMerchant) {
+          return res.status(403).json({ message: 'Only the merchant can change the base service amount' });
+        }
+        const locked =
+          booking.paymentStatus === 'paid' ||
+          ['SERVICE_COMPLETED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED', 'CANCELLED'].includes(booking.status);
+        if (locked) {
+          return res.status(400).json({ message: 'Base service amount can no longer be changed for this booking' });
+        }
+        if (baseServiceAmount === null || baseServiceAmount === '') {
+          booking.baseServiceAmountOverride = null;
+        } else {
+          const amount = Number(baseServiceAmount);
+          if (!Number.isFinite(amount) || amount < 0 || amount > 999999) {
+            return res.status(400).json({ message: 'Base service amount must be between 0 and 999999' });
+          }
+          booking.baseServiceAmountOverride = Math.round(amount * 100) / 100;
+        }
+        baseOverrideChanged = true;
+      }
+
       if (billing) {
         if (!booking.billing) booking.billing = {};
         Object.assign(booking.billing, billing);
         
         // Recalculate total instead of trusting billing.total from client
-        const { total: servicesTotal } = await calculateServicesTotal(booking.services, booking.vehicle, booking.selectedBrands, booking.serviceQuantities);
+        const servicesTotal = await resolveBookingBaseServiceTotal(booking);
         
         const partsTotal = Number(booking.billing.partsTotal || 0);
         const labourCost = Number(booking.billing.labourCost || 0);
@@ -2549,7 +2585,7 @@ export const updateBookingDetails = async (req, res) => {
         // Recalculate total amount
         const partsTotal = parts.reduce((acc, part) => acc + (part.price * part.quantity), 0);
         
-        const { total: servicesTotal } = await calculateServicesTotal(booking.services, booking.vehicle, booking.selectedBrands, booking.serviceQuantities);
+        const servicesTotal = await resolveBookingBaseServiceTotal(booking);
         
         const labourCost = Number(booking.billing?.labourCost || 0);
         const gst = Number(booking.billing?.gst || 0);
@@ -2582,6 +2618,40 @@ export const updateBookingDetails = async (req, res) => {
         if (booking.billing) {
             booking.billing.partsTotal = partsTotal;
             booking.billing.total = newTotal;
+        }
+      }
+
+      if (baseOverrideChanged && !billing && !parts) {
+        const servicesTotal = await resolveBookingBaseServiceTotal(booking);
+        const partsTotal = Array.isArray(booking.parts) && booking.parts.length > 0
+          ? booking.parts.reduce((acc, part) => acc + (Number(part.price) || 0) * (Number(part.quantity) || 0), 0)
+          : Number(booking.billing?.partsTotal || 0);
+        const labourCost = Number(booking.billing?.labourCost || 0);
+        const gst = Number(booking.billing?.gst || 0);
+        const pickupDropPrice = Number(booking.billing?.pickupDropPrice || booking.pickupDropPrice || 0);
+        const newTotal = servicesTotal + partsTotal + labourCost + gst + pickupDropPrice;
+        booking.totalAmount = newTotal;
+
+        if (booking.coupon) {
+          try {
+            const Coupon = (await import('../models/Coupon.js')).default;
+            const coupon = await Coupon.findById(booking.coupon);
+            if (coupon && coupon.isActive) {
+              let couponDiscount = (newTotal * coupon.discountPercentage) / 100;
+              if (coupon.maxDiscountAmount) {
+                couponDiscount = Math.min(couponDiscount, coupon.maxDiscountAmount);
+              }
+              booking.discountAmount = couponDiscount;
+            }
+          } catch (err) {
+            console.error('Error recalculating coupon discount after base override:', err);
+          }
+        }
+
+        booking.finalAmount = Math.max(0, newTotal - (booking.discountAmount || 0));
+        if (booking.billing && booking.billing.total != null) {
+          booking.billing.total = newTotal;
+          booking.markModified('billing');
         }
       }
 

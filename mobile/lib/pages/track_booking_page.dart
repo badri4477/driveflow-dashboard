@@ -225,11 +225,12 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
               success: true,
               title: 'Payment successful',
               message: 'Your booking payment has been completed successfully.',
-              primaryButtonLabel: 'Go to home',
-              primaryRoute: '/customer',
-              clearStackOnPrimary: true,
+              primaryButtonLabel: 'View booking',
+              popOnPrimary: true,
             ),
-          );
+          ).then((_) {
+            if (mounted) _load(silent: true);
+          });
         } else if (_isFailurePaymentStatus(paymentStatus)) {
           final statusMsg = paymentStatus == 'user_dropped'
               ? 'Payment was cancelled.'
@@ -1738,11 +1739,14 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                                 0)
                             .toDouble();
                     final discount = (booking.discountAmount ?? 0).toDouble();
-                    double servicesTotal = sumBookingServicesSubtotal(
-                      booking.services,
-                      _vehicleRef,
-                    );
-                    if (servicesTotal == 0) {
+                    final baseOverride = booking.baseServiceAmountOverride;
+                    double servicesTotal = baseOverride != null
+                        ? baseOverride.toDouble()
+                        : sumBookingServicesSubtotal(
+                            booking.services,
+                            _vehicleRef,
+                          );
+                    if (servicesTotal == 0 && baseOverride == null) {
                       final rawTotal = booking.totalAmount.toDouble();
                       servicesTotal =
                           (rawTotal - parts - labour - merchantGst - pickup)
@@ -3092,6 +3096,40 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                                 const SizedBox(height: 12),
                                 const Divider(height: 1),
                                 const SizedBox(height: 12),
+                                if ((booking.billing?.invoiceNumber ?? '')
+                                    .isNotEmpty) ...[
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Invoice No.',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: isDark
+                                              ? Colors.white60
+                                              : Colors.black54,
+                                        ),
+                                      ),
+                                      Text(
+                                        booking.billing!.invoiceNumber!,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                          color: isDark
+                                              ? Colors.white
+                                              : Colors.black87,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  const Divider(height: 1),
+                                  const SizedBox(height: 8),
+                                ],
                                 _buildCostRow(
                                   'Base Service Amount',
                                   '₹${servicesTotal.toInt()}',
@@ -3190,6 +3228,20 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                                   '₹${formatInrAmount(subtotal)}',
                                   isDark,
                                 ),
+                                if (isGeneralService &&
+                                    booking.baseServiceAmountOverride == null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: Text(
+                                      'Estimated price — final amount may change after inspection',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: isDark
+                                            ? Colors.white54
+                                            : Colors.black45,
+                                      ),
+                                    ),
+                                  ),
                                 if (discount > 0) ...[
                                   _buildCostRow(
                                     'Discount',

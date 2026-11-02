@@ -214,6 +214,8 @@ class BookingDetail {
   final UserSummary? merchant;
   final String? inspectionCompletedAt;
   final num? pickupDropPrice;
+  /// Merchant-set base service price (inspection); null = catalogue price.
+  final num? baseServiceAmountOverride;
   final String? qcCompletedAt;
   final BatteryTireData? batteryTire;
   final CarWashData? carWash;
@@ -262,6 +264,7 @@ class BookingDetail {
     this.delay,
     this.notes,
     this.pickupDropPrice,
+    this.baseServiceAmountOverride,
   });
 
   static const statusLabels = {
@@ -345,6 +348,7 @@ class BookingDetail {
     DelayData? delay,
     String? notes,
     num? pickupDropPrice,
+    num? baseServiceAmountOverride,
   }) {
     return BookingDetail(
       id: id ?? this.id,
@@ -389,6 +393,8 @@ class BookingDetail {
       delay: delay ?? this.delay,
       notes: notes ?? this.notes,
       pickupDropPrice: pickupDropPrice ?? this.pickupDropPrice,
+      baseServiceAmountOverride:
+          baseServiceAmountOverride ?? this.baseServiceAmountOverride,
     );
   }
 
@@ -554,6 +560,9 @@ class BookingDetail {
       notes: getField('notes')?.toString(),
       pickupDropPrice: getField('pickupDropPrice') is num
           ? getField('pickupDropPrice') as num
+          : null,
+      baseServiceAmountOverride: getField('baseServiceAmountOverride') is num
+          ? getField('baseServiceAmountOverride') as num
           : null,
     );
   }

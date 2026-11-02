@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import * as turf from '@turf/turf';
 import { searchVehicleReference } from '@/services/vehicleReferenceService';
-import { sumBookingServicesSubtotal } from '@/lib/vehicleServicePricing';
+import { sumBookingServicesSubtotal, getBaseServiceOverride } from '@/lib/vehicleServicePricing';
 import { uploadService, invoiceFileName } from '@/services/uploadService';
 
 
@@ -798,6 +798,36 @@ const BookingDetailPage: React.FC = () => {
              <div className="space-y-2 text-sm">
                 {isGeneralService && (
                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Base Service Amount:</span>
+                      <span className="font-bold">₹{(() => {
+                        const override = getBaseServiceOverride(booking);
+                        if (override !== null) return override;
+                        const serviceList = (Array.isArray(booking.services)
+                          ? booking.services.filter((s): s is Service => typeof s === 'object' && s !== null)
+                          : []) as Service[];
+                        const fromServices = serviceList.length > 0
+                          ? sumBookingServicesSubtotal(serviceList, vehicleRef, booking.selectedBrands, booking.serviceQuantities)
+                          : 0;
+                        if (fromServices > 0) return fromServices;
+                        const rest =
+                          (Number(booking.billing?.partsTotal) || 0) +
+                          (Number(booking.billing?.labourCost) || 0) +
+                          (Number(booking.billing?.gst) || 0) +
+                          (Number(booking.billing?.pickupDropPrice) || Number(booking.pickupDropPrice) || 0);
+                        return Math.max(0, (Number(booking.totalAmount) || 0) - rest);
+                      })()}</span>
+                   </div>
+                )}
+                {isGeneralService && (
+                   <div className="flex justify-between">
+                      <span className="text-muted-foreground">Parts Total:</span>
+                      <span className="font-bold">₹{booking.billing?.partsTotal != null
+                        ? Number(booking.billing.partsTotal) || 0
+                        : (booking.parts || []).reduce((acc, p) => acc + (Number(p.price) || 0) * (Number(p.quantity) || 0), 0)}</span>
+                   </div>
+                )}
+                {isGeneralService && (
+                   <div className="flex justify-between">
                       <span className="text-muted-foreground">Pickup/Drop Price:</span>
                       <span className="font-bold">₹{booking.billing?.pickupDropPrice || booking.pickupDropPrice || 0}</span>
                    </div>
@@ -885,6 +915,8 @@ const BookingDetailPage: React.FC = () => {
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground">Base Service:</span>
                     <span>₹{(() => {
+                        const override = getBaseServiceOverride(booking);
+                        if (override !== null) return override;
                         const serviceList = (Array.isArray(booking.services)
                           ? booking.services.filter((s): s is Service => typeof s === 'object' && s !== null)
                           : []) as Service[];

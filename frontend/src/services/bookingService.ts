@@ -16,6 +16,8 @@ export interface Booking {
   discountAmount?: number;
   coupon?: any;
   pickupDropPrice?: number;
+  /** Merchant-set base service price (inspection). Overrides the catalogue price when set. */
+  baseServiceAmountOverride?: number | null;
   selectedBrands?: Record<string, string>;
   serviceQuantities?: Record<string, number>;
   notes?: string;
@@ -165,6 +167,8 @@ export interface BookingDetailsUpdate {
   revisit?: Booking['revisit'];
   prePickupPhotos?: Booking['prePickupPhotos'];
   carWash?: Booking['carWash'];
+  /** Merchant override of the base service amount; null clears it. */
+  baseServiceAmount?: number | null;
 }
 
 export interface SlotAvailabilityResponse {

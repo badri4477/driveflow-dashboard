@@ -5,6 +5,7 @@ import { bookingService, Booking, BookingDetailsUpdate } from '../../services/bo
 import { createApproval } from '../../services/approvalService';
 import { uploadService } from '../../services/uploadService';
 import { toast } from 'sonner';
+import BaseServiceAmountEditor from './BaseServiceAmountEditor';
 
 interface InspectionPanelProps {
   booking: Booking;
@@ -189,7 +190,7 @@ const InspectionPanel: React.FC<InspectionPanelProps> = ({ booking, onUpdate }) 
         </div>
       </div>
 
-
+      <BaseServiceAmountEditor booking={booking} onUpdate={onUpdate} />
 
       <div className="pt-4 border-t flex gap-4">
         <button

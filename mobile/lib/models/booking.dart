@@ -345,6 +345,8 @@ class Booking {
   final List<Map<String, String>> statusHistory;
   final BookingBilling? billing;
   final num? pickupDropPrice;
+  /// Merchant-set base service price; null = catalogue price.
+  final num? baseServiceAmountOverride;
 
   Booking({
     required this.id,
@@ -389,6 +391,7 @@ class Booking {
     this.statusHistory = const [],
     this.billing,
     this.pickupDropPrice,
+    this.baseServiceAmountOverride,
   });
 
   num get calculatedTotal {
@@ -1011,6 +1014,9 @@ class Booking {
       billing: billing,
       pickupDropPrice: map['pickupDropPrice'] is num
           ? (map['pickupDropPrice'] as num)
+          : null,
+      baseServiceAmountOverride: map['baseServiceAmountOverride'] is num
+          ? (map['baseServiceAmountOverride'] as num)
           : null,
     );
   }

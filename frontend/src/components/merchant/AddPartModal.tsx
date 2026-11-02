@@ -13,8 +13,10 @@ interface AddPartModalProps {
 
 const AddPartModal: React.FC<AddPartModalProps> = ({ bookingId, onClose, onUpdate }) => {
   const [partName, setPartName] = useState('');
-  const [quantity, setQuantity] = useState(1);
-  const [price, setPrice] = useState(0);
+  const [quantityText, setQuantityText] = useState('1');
+  const [priceText, setPriceText] = useState('');
+  const quantity = parseInt(quantityText, 10) || 0;
+  const price = parseFloat(priceText) || 0;
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +34,7 @@ const AddPartModal: React.FC<AddPartModalProps> = ({ bookingId, onClose, onUpdat
   };
 
   const handleSubmit = async () => {
-    if (!partName || price <= 0) {
+    if (!partName.trim() || price <= 0 || quantity < 1) {
       toast.error('Please fill in all fields.');
       return;
     }
@@ -50,7 +52,7 @@ const AddPartModal: React.FC<AddPartModalProps> = ({ bookingId, onClose, onUpdat
         relatedId: bookingId,
         relatedModel: 'Booking',
         data: {
-          name: partName,
+          name: partName.trim(),
           price: price,
           quantity: quantity,
           image: imageUrl,
@@ -86,13 +88,14 @@ const AddPartModal: React.FC<AddPartModalProps> = ({ bookingId, onClose, onUpdat
             <label htmlFor="add-part-name" className="text-sm font-medium mb-1.5 block">
               Part Name
             </label>
-            <textarea
+            <input
               id="add-part-name"
-              rows={2}
+              type="text"
               placeholder="Enter part name"
+              maxLength={100}
               value={partName}
               onChange={(e) => setPartName(e.target.value)}
-              className="w-full min-w-0 max-w-full box-border p-2 border rounded-md bg-background resize-y min-h-[2.75rem] max-h-32 overflow-auto break-words"
+              className="w-full h-11 px-3 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
           <div className="flex gap-4 min-w-0">
@@ -102,12 +105,14 @@ const AddPartModal: React.FC<AddPartModalProps> = ({ bookingId, onClose, onUpdat
               </label>
               <input
                 id="add-part-quantity"
-                type="number"
+                type="text"
+                inputMode="numeric"
                 placeholder="1"
-                value={quantity}
-                onChange={(e) => setQuantity(parseInt(e.target.value, 10) || 1)}
-                className="w-full min-w-0 max-w-full box-border p-2 border rounded-md"
-                min="1"
+                value={quantityText}
+                onChange={(e) => {
+                  if (/^\d{0,3}$/.test(e.target.value)) setQuantityText(e.target.value);
+                }}
+                className="w-full h-11 px-3 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
             <div className="flex-1 min-w-0">
@@ -116,12 +121,14 @@ const AddPartModal: React.FC<AddPartModalProps> = ({ bookingId, onClose, onUpdat
               </label>
               <input
                 id="add-part-price"
-                type="number"
-                placeholder="0"
-                value={price}
-                onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
-                className="w-full min-w-0 max-w-full box-border p-2 border rounded-md"
-                min="0"
+                type="text"
+                inputMode="decimal"
+                placeholder="Enter price"
+                value={priceText}
+                onChange={(e) => {
+                  if (/^\d{0,6}(\.\d{0,2})?$/.test(e.target.value)) setPriceText(e.target.value);
+                }}
+                className="w-full h-11 px-3 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
           </div>

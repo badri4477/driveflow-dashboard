@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { redirectAfterCountdown } from '@/lib/countdownRedirect';
 import { useNavigate } from 'react-router-dom';
 import { isValidDate } from '@/lib/formValidation';
 import { toast } from 'sonner';
@@ -9,7 +10,7 @@ import { uploadService } from '../../services/uploadService';
 import { searchVehicleReference } from '../../services/vehicleReferenceService';
 import { Vehicle } from '../../services/vehicleService';
 import { PICKUP_FLOW_ORDER, NO_PICKUP_FLOW_ORDER, getFlowForService } from '@/lib/statusFlow';
-import { sumBookingServicesSubtotal } from '@/lib/vehicleServicePricing';
+import { sumBookingServicesSubtotal, getBaseServiceOverride } from '@/lib/vehicleServicePricing';
 
 interface BillUploadPanelProps {
   booking: Booking;
@@ -30,6 +31,9 @@ const getRecordedPartsTotal = (b: Booking): number => {
 };
 
 const getBaseServiceAmount = (b: Booking, vehicleRef: any = null) => {
+  const override = getBaseServiceOverride(b);
+  if (override !== null) return override;
+
   // Prefer calculating from services array for accuracy
   if (Array.isArray(b.services) && b.services.length > 0) {
     const serviceList = b.services.filter((s): s is any => typeof s === 'object' && s !== null);
@@ -192,7 +196,7 @@ const BillUploadPanel: React.FC<BillUploadPanelProps> = ({ booking, onUploadComp
             totalAmount: (baseAmount + partsNum + labourCost + gst + pickupDrop).toString()
         };
     });
-  }, [booking.billing?.partsTotal, booking.totalAmount, booking.parts, vehicleRef]);
+  }, [booking.billing?.partsTotal, booking.totalAmount, booking.parts, booking.baseServiceAmountOverride, vehicleRef]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -386,8 +390,7 @@ const BillUploadPanel: React.FC<BillUploadPanelProps> = ({ booking, onUploadComp
 
         setIsUploaded(true);
         onUploadComplete();
-        toast.success('Bill uploaded and service marked as completed');
-        navigate('/merchant/dashboard');
+        redirectAfterCountdown(navigate, '/merchant/dashboard', 'Bill uploaded and service marked as completed');
     } catch (error) {
         console.error(error);
         toast.error('Failed to save bill details');

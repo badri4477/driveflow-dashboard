@@ -1636,6 +1636,11 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
         final isPaid = result['success'] == true && paymentStatus == 'paid';
 
         if (isPaid) {
+          final booking = data?['booking'];
+          final newBookingId = booking is Map
+              ? booking['_id']?.toString()
+              : data?['bookingId']?.toString();
+          final hasBooking = newBookingId != null && newBookingId.isNotEmpty;
           Navigator.of(context).pushReplacementNamed(
             '/payment-status',
             arguments: PaymentStatusPage(
@@ -1643,8 +1648,9 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
               title: 'Payment successful',
               message:
                   'Your payment was received and the booking has been created successfully.',
-              primaryButtonLabel: 'Go to home',
-              primaryRoute: '/customer',
+              primaryButtonLabel: hasBooking ? 'View booking' : 'Go to home',
+              primaryRoute: hasBooking ? '/track' : '/customer',
+              primaryArguments: hasBooking ? newBookingId : null,
               clearStackOnPrimary: true,
               secondaryButtonLabel: 'View bookings',
               secondaryRoute: '/bookings',

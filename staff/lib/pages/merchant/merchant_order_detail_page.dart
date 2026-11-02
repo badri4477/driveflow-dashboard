@@ -24,6 +24,7 @@ import '../../widgets/states/skeleton.dart';
 import '../../widgets/states/state_view.dart';
 import '../../widgets/image_source_sheet.dart';
 import '../../widgets/image_viewer.dart';
+import '../../widgets/states/countdown_redirect_dialog.dart';
 
 class MerchantOrderDetailPage extends StatefulWidget {
   const MerchantOrderDetailPage({super.key});
@@ -70,6 +71,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       TextEditingController();
   final TextEditingController _partsCostController = TextEditingController();
   final TextEditingController _labourCostController = TextEditingController();
+  final TextEditingController _baseAmountController = TextEditingController();
+  bool _savingBaseAmount = false;
   final TextEditingController _gstController = TextEditingController();
   final TextEditingController _pickupDropPriceController =
       TextEditingController();
@@ -117,6 +120,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
     _invoiceNumberController.dispose();
     _partsCostController.dispose();
     _labourCostController.dispose();
+    _baseAmountController.dispose();
     _gstController.dispose();
     _pickupDropPriceController.dispose();
     _invoiceDateController.dispose();
@@ -258,6 +262,7 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
           final gst = data.billing?.gst ?? 0;
           _gstController.text = gst > 0 ? _amountText(gst) : '';
           _pickupDropPriceController.text = _amountText(_pickupDropFor(data));
+          _baseAmountController.text = _amountText(_baseServiceAmount(data));
           if (data.billing?.invoiceDate != null) {
             _selectedInvoiceDate = DateTime.parse(data.billing!.invoiceDate!);
             _invoiceDateController.text = DateFormat(
@@ -1455,6 +1460,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
   /// Base service amount = booking total minus everything else already on
   /// it (web's getBaseServiceAmount fallback).
   num _baseServiceAmount(BookingDetail b) {
+    final override = b.baseServiceAmountOverride;
+    if (override != null) return override;
     final total = b.totalAmount ?? 0;
     final rest =
         _recordedPartsTotal(b) +
@@ -2312,6 +2319,8 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
                   ],
                 ),
                 const SizedBox(height: 24),
+                _buildBaseAmountEditor(isDark),
+                const SizedBox(height: 24),
                 if (!isCompleted)
                   Row(
                     children: [
@@ -2484,6 +2493,138 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
       return _pickAndUploadImage(source);
     }
     return null;
+  }
+
+  static const _baseAmountLockedStatuses = {
+    'SERVICE_COMPLETED',
+    'OUT_FOR_DELIVERY',
+    'DELIVERED',
+    'COMPLETED',
+    'CANCELLED',
+  };
+
+  bool get _baseAmountLocked =>
+      _booking == null ||
+      _booking!.paymentStatus == 'paid' ||
+      _baseAmountLockedStatuses.contains(_booking!.status);
+
+  /// Merchant override of the base service amount (same as web
+  /// BaseServiceAmountEditor). Pass null to reset to the catalogue price.
+  Future<void> _saveBaseAmount(num? amount) async {
+    if (_booking == null) return;
+    setState(() => _savingBaseAmount = true);
+    try {
+      await _service.updateBookingDetails(_booking!.id, {
+        'baseServiceAmount': amount,
+      });
+      await _load(_booking!.id);
+      if (mounted) {
+        StatusFeedback.success(
+          amount == null
+              ? 'Base service amount reset to standard price'
+              : 'Base service amount updated',
+        );
+      }
+    } catch (e) {
+      if (mounted) StatusFeedback.error('Failed to update base service amount');
+    } finally {
+      if (mounted) setState(() => _savingBaseAmount = false);
+    }
+  }
+
+  Widget _buildBaseAmountEditor(bool isDark) {
+    final b = _booking!;
+    final locked = _baseAmountLocked;
+    final isOverridden = b.baseServiceAmountOverride != null;
+    final parsed = num.tryParse(_baseAmountController.text.trim());
+    final invalid = parsed == null || parsed < 0 || parsed > 999999;
+    final dirty = !invalid && parsed != _baseServiceAmount(b);
+    final muted = isDark ? Colors.grey[400] : const Color(0xFF6B7280);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Base Service Amount',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: isDark ? Colors.white : const Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          "Change this if the inspection shows the service costs more or less "
+          "than the standard price. The customer's bill and payment update "
+          'automatically.',
+          style: TextStyle(fontSize: 13, color: muted),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _baseAmountController,
+          enabled: !locked && !_savingBaseAmount,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'^\d{0,6}(\.\d{0,2})?')),
+          ],
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            prefixText: '₹ ',
+            errorText: invalid ? 'Enter an amount between 0 and 999999' : null,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton(
+                onPressed: locked || _savingBaseAmount || !dirty
+                    ? null
+                    : () => _saveBaseAmount((parsed * 100).round() / 100),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  _savingBaseAmount ? 'Saving...' : 'Update Amount',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            if (isOverridden && !locked) ...[
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _savingBaseAmount ? null : () => _saveBaseAmount(null),
+                icon: const Icon(Icons.restart_alt, size: 18),
+                label: const Text('Reset'),
+                style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+              ),
+            ],
+          ],
+        ),
+        if (locked)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Locked after the service is completed or paid.',
+              style: TextStyle(fontSize: 12, color: muted),
+            ),
+          )
+        else if (isOverridden)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Set by merchant (differs from the standard price).',
+              style: TextStyle(fontSize: 12, color: muted),
+            ),
+          ),
+      ],
+    );
   }
 
   Future<void> _saveInspection({required bool isFinal}) async {
@@ -4397,10 +4538,12 @@ class _MerchantOrderDetailPageState extends State<MerchantOrderDetailPage>
 
       await _load(_booking!.id);
       if (mounted) {
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        if (messenger != null) {
-          StatusFeedback.auto('Bill submitted and service completed');
-        }
+        await showCountdownRedirect(
+          context,
+          title: 'Bill submitted',
+          message: 'Bill submitted and service completed.',
+          route: '/merchant-dashboard',
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -5783,8 +5926,8 @@ class _AddPartDialogState extends State<_AddPartDialog> {
                 'Part Name',
                 TextField(
                   controller: _nameController,
-                  minLines: 1,
-                  maxLines: 3,
+                  maxLines: 1,
+                  maxLength: 100,
                   textCapitalization: TextCapitalization.sentences,
                   style: TextStyle(color: textColor, fontSize: 15),
                   decoration: deco(hint: 'Enter part name'),
@@ -5799,6 +5942,10 @@ class _AddPartDialogState extends State<_AddPartDialog> {
                       TextField(
                         controller: _qtyController,
                         keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(3),
+                        ],
                         style: TextStyle(color: textColor, fontSize: 15),
                         decoration: deco(hint: '1'),
                       ),
@@ -5813,6 +5960,11 @@ class _AddPartDialogState extends State<_AddPartDialog> {
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d{0,6}(\.\d{0,2})?'),
+                          ),
+                        ],
                         style: TextStyle(color: textColor, fontSize: 15),
                         decoration: deco(hint: '0', prefix: '₹ '),
                       ),

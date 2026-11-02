@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { redirectAfterCountdown } from '@/lib/countdownRedirect';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { bookingService, Booking } from '@/services/bookingService';
@@ -87,9 +88,9 @@ const StaffOrderPage: React.FC = () => {
       const verifyRes = (await bookingService.verifyDeliveryOtp(order!._id, otpValue)) as { booking?: Booking };
       const updated = verifyRes.booking ?? (await bookingService.getBookingById(order!._id));
       setOrder(updated);
-      toast.success(`OTP verified successfully! Order completed.`);
       setShowOtpModal(false);
       setOtpValue('');
+      redirectAfterCountdown(navigate, '/staff/dashboard', 'OTP verified — order delivered');
     } catch (err: any) {
       console.error('OTP verification error:', err);
       setOtpError(err.response?.data?.message || 'Invalid OTP. Please try again.');
@@ -414,8 +415,7 @@ const StaffOrderPage: React.FC = () => {
         navigate('/staff/dashboard', { replace: true });
         return;
       } else if (newStatus === 'DELIVERED' || newStatus === 'COMPLETED') {
-        toast.success('Order delivered successfully. Returning to dashboard.');
-        navigate('/staff/dashboard', { replace: true });
+        redirectAfterCountdown(navigate, '/staff/dashboard', 'Order delivered successfully');
         return;
       }
 
