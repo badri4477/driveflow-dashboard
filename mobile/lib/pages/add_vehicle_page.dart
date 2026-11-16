@@ -145,6 +145,8 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
 
   Map<String, dynamic>? get _matchedReference {
     if (_selectedBrand == null || _selectedModel == null) return null;
+    // Prefer the row with the fuel already chosen (e.g. Diesel from Vahan) over the first row.
+    Map<String, dynamic>? first;
     for (final r in _allReferences) {
       final matchesVariant =
           _selectedVariant == null ||
@@ -152,10 +154,14 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
       if ((r['brand_name'] ?? '').toString() == _selectedBrand &&
           (r['model'] ?? '').toString() == _selectedModel &&
           matchesVariant) {
-        return r;
+        if (_fuelType != null &&
+            _normalizeFuelType(r['fuel_type']?.toString()) == _fuelType) {
+          return r;
+        }
+        first ??= r;
       }
     }
-    return null;
+    return first;
   }
 
   /// Clears _fuelType if it's no longer one of the options offered for the
@@ -262,6 +268,85 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     return hits.length == 1 ? hits.first : null;
   }
 
+  static const _trimNoise = {
+    'BSIV',
+    'BSVI',
+    'BS4',
+    'BS6',
+    'BSIII',
+    'BS3',
+    'BHARAT',
+    'STAGE',
+    'AT',
+    'MT',
+    'AMT',
+  };
+  List<String> _words(String s) => s
+      .toUpperCase()
+      .replaceAll(RegExp(r'[()]'), ' ')
+      .split(RegExp(r'[^A-Z0-9]+'))
+      .where((w) => w.length >= 2 && !_trimNoise.contains(w))
+      .toList();
+
+  /// Vahan "I20 ASTA-CRDI BSIV" + catalog "2012 [ Asta ]": most shared trim
+  /// words, then same fuel, then newest generation year <= manufacturing
+  /// year. Returns null on a tie so the user chooses.
+  String? _matchVariant(String vahanModel, String? fuel, int? year) {
+    if (vahanModel.isEmpty ||
+        vahanModel.contains('*') ||
+        _selectedModel == null) {
+      return null;
+    }
+    final modelWords = _words(_selectedModel!).toSet();
+    final trim = _words(
+      vahanModel,
+    ).where((w) => !modelWords.contains(w)).toList();
+    if (trim.isEmpty) return null;
+    final best = <String, double>{};
+    for (final r in _allReferences) {
+      if ((r['brand_name'] ?? '').toString() != _selectedBrand ||
+          (r['model'] ?? '').toString() != _selectedModel) {
+        continue;
+      }
+      final v = (r['brand_model'] ?? '').toString().trim();
+      if (v.isEmpty) continue;
+      final vw = _words(v).toSet();
+      double score = 0;
+      for (final t in trim) {
+        if (vw.contains(t)) {
+          score += 10;
+        } else if (vw.any(
+          (w) => w.length >= 3 && (w.startsWith(t) || t.startsWith(w)),
+        )) {
+          score += 6;
+        }
+      }
+      if (score == 0) continue;
+      if (fuel != null &&
+          _normalizeFuelType(r['fuel_type']?.toString()) == fuel) {
+        score += 3;
+      }
+      if (year != null) {
+        final ys = RegExp(
+          r'(19|20)\d{2}',
+        ).allMatches(v).map((m) => int.parse(m.group(0)!)).toList();
+        final eligible = ys.where((y) => y <= year).toList();
+        if (eligible.isNotEmpty) {
+          final gen = eligible.reduce((a, b) => a > b ? a : b);
+          score += 2 + (gen - 1900) / 1000;
+        } else if (ys.isNotEmpty) {
+          score -= 2;
+        }
+      }
+      if (!best.containsKey(v) || score > best[v]!) best[v] = score;
+    }
+    if (best.isEmpty) return null;
+    final ranked = best.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    if (ranked.length > 1 && ranked[0].value == ranked[1].value) return null;
+    return ranked.first.key;
+  }
+
   void _applyVahanResult(Map<String, dynamic> r) {
     final brand = _matchBrand((r['maker'] ?? '').toString());
     setState(() {
@@ -282,6 +367,14 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
       }
       final fuel = _normalizeFuelType((r['fuelType'] ?? '').toString());
       if (fuel != null && _fuelOptions.contains(fuel)) _fuelType = fuel;
+      if (_selectedModel != null) {
+        final y = r['year'];
+        _selectedVariant = _matchVariant(
+          (r['model'] ?? '').toString(),
+          fuel,
+          y is int ? y : int.tryParse('$y'),
+        );
+      }
       _resetFuelTypeIfInvalid();
       _fillTick++;
     });

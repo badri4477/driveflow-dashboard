@@ -219,8 +219,10 @@ const AdminCreateBookingPage: React.FC = () => {
   // Auto-fill fuel + tyre sizes once the selection resolves to a catalog record.
   useEffect(() => {
     if (!newVehicle.make || !newVehicle.model) return;
-    const match = catalog.find((r) => r.brand_name === newVehicle.make && r.model === newVehicle.model &&
+    const rows = catalog.filter((r) => r.brand_name === newVehicle.make && r.model === newVehicle.model &&
       (!newVehicle.variant || r.brand_model === newVehicle.variant));
+    // Prefer the row with the fuel already chosen (e.g. Diesel from Vahan) over the first row.
+    const match = rows.find((r) => newVehicle.fuelType && r.fuel_type === newVehicle.fuelType) || rows[0];
     if (!match) return;
     setNewVehicle((v) => ({
       ...v,
@@ -589,7 +591,7 @@ const AdminCreateBookingPage: React.FC = () => {
                           licensePlate: fill.licensePlate || v.licensePlate,
                           make: fill.make || v.make,
                           model: fill.make ? fill.model || '' : v.model,
-                          variant: fill.make ? '' : v.variant,
+                          variant: fill.make ? fill.variant || '' : v.variant,
                           fuelType: fill.fuelType || v.fuelType,
                         }))
                       }

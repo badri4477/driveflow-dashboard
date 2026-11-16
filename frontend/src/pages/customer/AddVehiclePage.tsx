@@ -256,12 +256,14 @@ const AddVehiclePage: React.FC = () => {
   // picked) resolve to a specific catalog record.
   useEffect(() => {
     if (!formData.make || !formData.model) return;
-    const match = catalog.find(
+    const rows = catalog.filter(
       (r) =>
         (r.brand_name || '') === formData.make &&
         (r.model || '') === formData.model &&
         (!formData.variant || (r.brand_model || '') === formData.variant)
     );
+    // Prefer the row with the fuel already chosen (e.g. Diesel from Vahan) over the first row.
+    const match = rows.find((r) => formData.fuel && r.fuel_type === formData.fuel) || rows[0];
     if (!match) return;
     setFormData((prev) => ({
       ...prev,
@@ -388,7 +390,7 @@ const AddVehiclePage: React.FC = () => {
                   licensePlate: fill.licensePlate || prev.licensePlate,
                   make: fill.make || prev.make,
                   model: fill.make ? fill.model || '' : prev.model,
-                  variant: fill.make ? '' : prev.variant,
+                  variant: fill.make ? fill.variant || '' : prev.variant,
                   fuel: fill.fuelType || prev.fuel,
                 }))
               }
