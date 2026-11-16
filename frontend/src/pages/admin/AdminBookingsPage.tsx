@@ -24,6 +24,9 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { STATUS_LABELS, getStatusLabel } from '@/lib/statusFlow';
 
+// Hidden for now (code kept): admin "Create Booking" (book on a customer's behalf).
+const SHOW_CREATE_BOOKING = false;
+
 const AdminBookingsPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -182,13 +185,13 @@ const AdminBookingsPage: React.FC = () => {
           <h1 className="text-xl lg:text-2xl font-bold mb-1">Booking Management</h1>
           <p className="text-sm text-muted-foreground">Manage service requests and order flow.</p>
         </div>
-        <button
+        {SHOW_CREATE_BOOKING && <button
           type="button"
           onClick={() => navigate('/admin/bookings/new')}
           className="h-11 px-4 inline-flex items-center justify-center gap-2 rounded-lg font-medium text-white bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-colors"
         >
           <Plus className="w-4 h-4" /> Create Booking
-        </button>
+        </button>}
       </div>
 
       <InvoiceSettingsCard />

@@ -45,6 +45,8 @@
 
 - Vahan → variant: catalog variants are "<generation year> [ Trim ]" (e.g. i20 "2012 [ Asta ]"). matchVariant (web vahanMatch.ts / mobile _matchVariant) scores shared trim words from Vahan rcMakerModel ("I20 ASTA-CRDI BSIV"), +fuel, +newest generation ≤ manufacturing year; tie ⇒ blank. Catalog autofill prefers the row with the already-chosen fuel (previously took the first row and overwrote Vahan Diesel with Petrol). Verified on live data: TS08EN4488 ⇒ Hyundai / i20 / 2012 [ Asta ] / Diesel. Date: 2026-11-16
 
+- Hidden in admin (code kept, flip the flag to restore): Create Booking button (`SHOW_CREATE_BOOKING` in AdminBookingsPage; /admin/bookings/new route still exists) and Payment Info total editing (`SHOW_TOTAL_OVERRIDE` → TotalOverrideCard in BookingDetailPage). Date: 2026-11-16
+
 ## 7. Known Issues
 - Vahan live test 2026-11-16 (TS08JY4741): creds valid, token OK, AES encrypt/decrypt OK; search blocked "Access denied: IP 14.195.126.210 is not authorized" (dev machine IP). Only the whitelisted server IP works. Token endpoint answers in PLAIN JSON (not encrypted, unlike the PDF); service accepts both. 403 ⇒ code VAHAN_FORBIDDEN ⇒ 503 "not authorised from this server". Raw search payload logged to console when APP_ENV≠production.
 - Approving inspection parts recalculates totals but not the coupon discount.

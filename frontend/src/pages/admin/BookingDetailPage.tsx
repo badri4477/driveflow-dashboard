@@ -35,6 +35,9 @@ import { sumBookingServicesSubtotal, getBaseServiceOverride } from '@/lib/vehicl
 import { uploadService, invoiceFileName } from '@/services/uploadService';
 import TotalOverrideCard from '@/components/admin/TotalOverrideCard';
 
+// Hidden for now (code kept): admin editing of the booking total in Payment Info.
+const SHOW_TOTAL_OVERRIDE = false;
+
 
 const BookingDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -917,7 +920,7 @@ const BookingDetailPage: React.FC = () => {
                   </button>
                 )}
              </div>
-             {isGeneralService && (
+             {SHOW_TOTAL_OVERRIDE && isGeneralService && (
                <TotalOverrideCard booking={booking} onUpdated={setBooking} />
              )}
           </div>
