@@ -111,6 +111,8 @@ const AdminServicesPage = lazyRetry(() => import("./pages/admin/AdminServicesPag
 const AdminCouponsPage = lazyRetry(() => import("./pages/admin/AdminCouponsPage"));
 const AdminBookingsPage = lazyRetry(() => import("./pages/admin/AdminBookingsPage"));
 const AdminBookingDetailPage = lazyRetry(() => import("./pages/admin/BookingDetailPage"));
+const AdminCreateBookingPage = lazyRetry(() => import("./pages/admin/AdminCreateBookingPage"));
+const BookingSummaryPage = lazyRetry(() => import("./pages/public/BookingSummaryPage"));
 const AdminStaffPage = lazyRetry(() => import("./pages/admin/AdminStaffPage"));
 const AdminMerchantsPage = lazyRetry(() => import("./pages/admin/AdminMerchantsPage"));
 const AdminMerchantDetailPage = lazyRetry(() => import("./pages/admin/MerchantDetailPage"));
@@ -193,6 +195,9 @@ const App = () => {
             <Route path="/track/:id" element={<TrackServicePage />} />
           </Route>
           
+          {/* Booking summary from the admin-booking WhatsApp/SMS link (no login needed) */}
+          <Route path="/booking/:token" element={<ErrorBoundary><BookingSummaryPage /></ErrorBoundary>} />
+
           {/* Auth Routes - Wrapped in PublicRoute to redirect logged-in users */}
           <Route element={<PublicRoute />}>
             <Route element={<ErrorBoundary><AuthLayout /></ErrorBoundary>}>
@@ -253,6 +258,7 @@ const App = () => {
               <Route path="/admin/vehicles" element={<AdminVehiclesPage />} />
               <Route path="/admin/vehicles/:id" element={<AdminVehicleDetailPage />} />
               <Route path="/admin/bookings" element={<AdminBookingsPage />} />
+              <Route path="/admin/bookings/new" element={<AdminCreateBookingPage />} />
               <Route path="/admin/bookings/:id" element={<AdminBookingDetailPage />} />
               <Route path="/admin/services" element={<AdminServicesPage />} />
               <Route path="/admin/coupons" element={<AdminCouponsPage />} />

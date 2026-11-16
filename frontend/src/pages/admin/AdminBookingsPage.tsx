@@ -18,7 +18,8 @@ import {
   Truck, 
   Wrench,
   Eye,
-  Shield
+  Shield,
+  Plus,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { STATUS_LABELS, getStatusLabel } from '@/lib/statusFlow';
@@ -181,6 +182,13 @@ const AdminBookingsPage: React.FC = () => {
           <h1 className="text-xl lg:text-2xl font-bold mb-1">Booking Management</h1>
           <p className="text-sm text-muted-foreground">Manage service requests and order flow.</p>
         </div>
+        <button
+          type="button"
+          onClick={() => navigate('/admin/bookings/new')}
+          className="h-11 px-4 inline-flex items-center justify-center gap-2 rounded-lg font-medium text-white bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-colors"
+        >
+          <Plus className="w-4 h-4" /> Create Booking
+        </button>
       </div>
 
       <InvoiceSettingsCard />
@@ -256,6 +264,7 @@ const AdminBookingsPage: React.FC = () => {
                     >
                       <td className="p-3">
                         <span className="font-mono text-xs text-muted-foreground">#{booking.orderNumber ?? booking._id.slice(-6).toUpperCase()}</span>
+                        {booking.createdByAdmin && <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[11px] font-medium bg-primary/10 text-primary align-middle">Admin-created</span>}
                       </td>
                       <td className="p-3">
                         <div className="flex flex-col">
@@ -370,7 +379,7 @@ const AdminBookingsPage: React.FC = () => {
               >
                 <div className="flex justify-between items-start gap-2 mb-3 min-w-0">
                   <div className="min-w-0 flex-1">
-                    <span className="font-mono text-xs text-muted-foreground block truncate">#{booking.orderNumber ?? booking._id.slice(-6).toUpperCase()}</span>
+                    <span className="font-mono text-xs text-muted-foreground block truncate">#{booking.orderNumber ?? booking._id.slice(-6).toUpperCase()}{booking.createdByAdmin && <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[11px] font-medium bg-primary/10 text-primary align-middle">Admin-created</span>}</span>
                     <span className="font-bold text-sm mt-0.5 block truncate">{(booking.user && typeof booking.user === 'object' && 'name' in booking.user && booking.user.name) || 'Unknown User'}</span>
                   </div>
                   <div className="shrink-0 max-w-[48%]">

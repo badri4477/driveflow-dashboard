@@ -1383,6 +1383,19 @@ const TrackServicePage: React.FC = () => {
                               <span>₹{gst}</span>
                             </div>
                           )}
+                          {(() => {
+                            // Admin override: show the gap so the lines add up to the total.
+                            if (order.totalPriceOverride?.amount == null) return null;
+                            const shown = baseAmount + parts + labour + (isGeneralService ? pickup : 0) + gst;
+                            const adjustment = Math.round(((order.finalAmount || 0) + discount - shown) * 100) / 100;
+                            if (adjustment === 0) return null;
+                            return (
+                              <div className="flex justify-between text-sm text-muted-foreground">
+                                <span>Price adjustment</span>
+                                <span>{adjustment < 0 ? '-' : ''}₹{Math.abs(adjustment)}</span>
+                              </div>
+                            );
+                          })()}
                           <div className="flex justify-between font-bold text-foreground text-lg pt-2 border-t border-border mt-2">
                             <span>Total Billed Amount</span>
                             <div className="text-right">
@@ -1432,6 +1445,22 @@ const TrackServicePage: React.FC = () => {
                         <span>₹{order.gstAmount}</span>
                       </div>
                     )}
+                    {order.totalPriceOverride?.amount != null && (() => {
+                      const serviceList = (Array.isArray(order.services)
+                        ? order.services.filter((s): s is Service => typeof s === 'object' && s !== null)
+                        : []) as Service[];
+                      const subtotal = Number(getBaseServiceOverride(order) ?? (serviceList.length > 0
+                        ? sumBookingServicesSubtotal(serviceList, vehicleRef, order.selectedBrands, order.serviceQuantities)
+                        : order.totalAmount)) || 0;
+                      const adjustment = Math.round(((order.finalAmount || 0) - (subtotal - (order.discountAmount || 0))) * 100) / 100;
+                      if (adjustment === 0) return null;
+                      return (
+                        <div className="flex justify-between text-sm text-muted-foreground">
+                          <span>Price adjustment</span>
+                          <span>{adjustment < 0 ? '-' : ''}₹{Math.abs(adjustment)}</span>
+                        </div>
+                      );
+                    })()}
                     <div className="flex justify-between font-bold text-foreground text-lg pt-2 border-t border-border">
                       <span>Total Amount</span>
                       <span>₹{order.finalAmount || order.totalAmount}</span>

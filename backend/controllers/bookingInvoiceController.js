@@ -335,7 +335,9 @@ export const getBookingInvoice = async (req, res) => {
       return res.status(400).json({ message: 'Invoice not available for car wash bookings' });
     }
 
-    if (booking.billing && booking.billing.fileUrl) {
+    // An admin-overridden total must come from the generated invoice, not
+    // the merchant's uploaded bill file.
+    if (booking.billing && booking.billing.fileUrl && booking.totalPriceOverride?.amount == null) {
       return res.redirect(booking.billing.fileUrl);
     }
 
@@ -709,13 +711,16 @@ export const getBookingInvoice = async (req, res) => {
         (acc, part) => acc + (Number(part.price) || 0) * (Number(part.quantity) || 1),
         0
       );
-      const storedServices = round2(
+      let storedServices = round2(
         storedTotal -
           partsTotal -
           (Number(booking.billing?.labourCost) || 0) -
           (Number(booking.billing?.gst) || 0) -
           (isGeneralService ? Number(booking.pickupDropPrice) || 0 : 0)
       );
+      // Admin-overridden lines: services come straight from the admin's base amount.
+      const overrideLines = booking.totalPriceOverride?.amount != null ? booking.totalPriceOverride.lines : null;
+      if (overrideLines) storedServices = round2(Number(overrideLines.baseService) || 0);
       const resolvedServices = round2(serviceRows.reduce((acc, r) => acc + r.price * r.qty, 0));
       if (storedServices > 0 && storedServices !== resolvedServices) {
         let remaining = storedServices;
@@ -758,6 +763,14 @@ export const getBookingInvoice = async (req, res) => {
       });
     }
 
+    const overrideLabour = booking.totalPriceOverride?.amount != null
+      ? Number(booking.totalPriceOverride.lines?.labourCost) || 0
+      : 0;
+    if (overrideLabour > 0) {
+      drawRow('Labour', 1, overrideLabour, overrideLabour);
+      subtotal = round2(subtotal + overrideLabour);
+    }
+
     doc.moveTo(tableX, y).lineTo(tableX + contentW, y).stroke(COLORS.border);
     y += 14;
 
@@ -792,7 +805,12 @@ export const getBookingInvoice = async (req, res) => {
     } else {
       tax = calculateOrderTotals(subtotal, discount, true).tax;
     }
-    const total = Math.round((Math.max(0, subtotal - discount) + tax) * 100) / 100;
+    let total = Math.round((Math.max(0, subtotal - discount) + tax) * 100) / 100;
+    // Service lines are scaled to the stored total above; if that couldn't
+    // absorb an admin override (e.g. override below parts cost), show the gap.
+    const overrideAmount = booking.totalPriceOverride?.amount;
+    const priceAdjustment =
+      overrideAmount != null ? Math.round((Number(overrideAmount) - total) * 100) / 100 : 0;
 
     // With a discount: Amount → Discount → Subtotal (after discount) → Tax.
     if (discount > 0) {
@@ -813,6 +831,14 @@ export const getBookingInvoice = async (req, res) => {
           ? 'Tax (GST)'
           : `Tax (GST ${Math.round(CHECKOUT_GST_RATE * 100)}%)`;
       moneyRowTotals(taxLabel, formatInr(tax), false);
+    }
+    if (priceAdjustment !== 0) {
+      moneyRowTotals(
+        'Price adjustment',
+        `${priceAdjustment < 0 ? '- ' : ''}${formatInr(Math.abs(priceAdjustment))}`,
+        false
+      );
+      total = Math.round((total + priceAdjustment) * 100) / 100;
     }
     ty += 4;
     doc.save();

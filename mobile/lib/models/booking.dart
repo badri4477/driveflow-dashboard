@@ -347,6 +347,8 @@ class Booking {
   final num? pickupDropPrice;
   /// Merchant-set base service price; null = catalogue price.
   final num? baseServiceAmountOverride;
+  /// Admin-set total the customer pays (general service); null = calculated.
+  final num? totalPriceOverrideAmount;
 
   Booking({
     required this.id,
@@ -392,6 +394,7 @@ class Booking {
     this.billing,
     this.pickupDropPrice,
     this.baseServiceAmountOverride,
+    this.totalPriceOverrideAmount,
   });
 
   num get calculatedTotal {
@@ -1017,6 +1020,10 @@ class Booking {
           : null,
       baseServiceAmountOverride: map['baseServiceAmountOverride'] is num
           ? (map['baseServiceAmountOverride'] as num)
+          : null,
+      totalPriceOverrideAmount: map['totalPriceOverride'] is Map &&
+              (map['totalPriceOverride'] as Map)['amount'] is num
+          ? (map['totalPriceOverride'] as Map)['amount'] as num
           : null,
     );
   }

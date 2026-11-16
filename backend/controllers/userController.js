@@ -5,6 +5,7 @@ import { sendEmail } from '../utils/emailService.js';
 import { getIO } from '../socket.js';
 import { emitEntitySync } from '../utils/syncService.js';
 import { isValidName, isValidPhone10, hasExcessiveRepeatedChars, isValidEmail } from '../utils/validation.js';
+import { isPlaceholderEmail, publicEmail } from '../utils/placeholderEmail.js';
 
 // @desc    Get all users (with optional filtering)
 // @route   GET /api/users
@@ -154,7 +155,8 @@ export const updateUserProfile = async (req, res) => {
       user.name = trimmedName;
     }
     
-    if (req.body.email !== undefined) {
+    const keepPlaceholder = isPlaceholderEmail(user.email) && !String(req.body.email ?? '').trim();
+    if (req.body.email !== undefined && !keepPlaceholder) {
       const normalizedEmail = req.body.email.toLowerCase().trim();
       if (user.role === 'staff' && normalizedEmail !== user.email) {
         return res.status(403).json({ message: 'Staff cannot change email address' });
@@ -238,7 +240,7 @@ export const updateUserProfile = async (req, res) => {
         const updatePayload = {
           userId: updatedUser._id,
           name: updatedUser.name,
-          email: updatedUser.email,
+          email: publicEmail(updatedUser.email),
           role: updatedUser.role,
           phone: updatedUser.phone,
           location: updatedUser.location
@@ -256,7 +258,7 @@ export const updateUserProfile = async (req, res) => {
       res.json({
         _id: updatedUser._id,
         name: updatedUser.name,
-        email: updatedUser.email,
+        email: publicEmail(updatedUser.email),
         role: updatedUser.role,
         phone: updatedUser.phone,
         location: updatedUser.location,
@@ -297,7 +299,8 @@ export const updateUser = async (req, res) => {
 
     if (user) {
       user.name = req.body.name || user.name;
-      if (req.body.email !== undefined) {
+      const keepPlaceholder = isPlaceholderEmail(user.email) && !String(req.body.email ?? '').trim();
+      if (req.body.email !== undefined && !keepPlaceholder) {
         const normalizedEmail = req.body.email.toLowerCase().trim();
         const emailValidation = isValidEmail(normalizedEmail);
         if (!emailValidation.valid) {
@@ -324,7 +327,7 @@ export const updateUser = async (req, res) => {
       res.json({
         _id: updatedUser._id,
         name: updatedUser.name,
-        email: updatedUser.email,
+        email: publicEmail(updatedUser.email),
         role: updatedUser.role,
         phone: updatedUser.phone,
         category: updatedUser.category,

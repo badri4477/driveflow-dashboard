@@ -66,7 +66,10 @@ const PaymentPage: React.FC = () => {
           const booking = await bookingService.getBookingById(payExistingId);
           if (cancelled) return;
           const billed = booking.billing?.total;
-          const total = typeof billed === 'number' && billed > 0 ? billed : Number(booking.finalAmount || booking.totalAmount) || 0;
+          const overridden = booking.totalPriceOverride?.amount;
+          const total = overridden != null
+            ? Number(overridden)
+            : typeof billed === 'number' && billed > 0 ? billed : Number(booking.finalAmount || booking.totalAmount) || 0;
           const loc = booking.location;
           setTempBookingData({
             totalAmount: total,

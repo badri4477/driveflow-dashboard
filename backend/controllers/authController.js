@@ -19,6 +19,7 @@ import {
 } from '../utils/msg91Service.js';
 import { isTestingEnv } from '../utils/appEnvironment.js';
 import { isValidEmail, isValidPhone10 } from '../utils/validation.js';
+import { publicEmail } from '../utils/placeholderEmail.js';
 
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(?:[a-zA-Z0-9-]*[a-zA-Z][a-zA-Z0-9-]*\.)+[a-zA-Z]{2,}$/;
 const MAX_NAME_LENGTH = 50;
@@ -74,7 +75,7 @@ const clearLoginFailures = async (user) => {
 const userAuthFields = (user) => ({
   _id: user._id,
   name: user.name,
-  email: user.email,
+  email: publicEmail(user.email),
   role: user.role,
   subRole: user.subRole,
   phone: user.phone,

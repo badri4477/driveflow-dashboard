@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, MapPin, Save, Plus, Trash2, Home, Car, LogOut } from 'lucide-react';
+import { User, Mail, Phone, MapPin, Save, Plus, Trash2, Home, Car, LogOut, Pencil } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { vehicleService, Vehicle } from '@/services/vehicleService';
 import { userService } from '@/services/userService';
@@ -28,14 +28,24 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 
+
+/** Admin-created customers may have a hidden placeholder email; never show it. */
+const visibleEmail = (email?: string | null) =>
+  email && !email.toLowerCase().endsWith('@customer.carzzi.in') ? email : '';
+
 const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
   const { user, updateUser } = useAuthStore();
   const [formData, setFormData] = useState({
     name: user?.name || '',
-    email: user?.email || '',
+    email: visibleEmail(user?.email),
     phone: user?.phone || '',
   });
+  // Personal details are read-only until the customer presses Edit.
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const resetForm = () =>
+    setFormData({ name: user?.name || '', email: visibleEmail(user?.email), phone: user?.phone || '' });
   const [myVehicles, setMyVehicles] = useState<Vehicle[]>([]);
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
   const [selectedVehicleForDetail, setSelectedVehicleForDetail] = useState<Vehicle | null>(null);
@@ -100,12 +110,9 @@ const ProfilePage: React.FC = () => {
     }
 
     // Validate email
+    // Optional: customers booked by an admin may not have an email yet.
     const trimmedEmail = formData.email.trim();
-    if (!trimmedEmail) {
-      toast.error('Email is required');
-      return;
-    }
-    const emailValidation = isValidEmail(trimmedEmail);
+    const emailValidation = trimmedEmail ? isValidEmail(trimmedEmail) : { valid: true };
     if (!emailValidation.valid) {
       toast.error(emailValidation.error || 'Please enter a valid email address');
       return;
@@ -122,16 +129,20 @@ const ProfilePage: React.FC = () => {
       return;
     }
     
+    setIsSaving(true);
     try {
       const updated = await userService.updateProfile({ 
         name: trimmedName, 
-        email: trimmedEmail, 
+        ...(trimmedEmail ? { email: trimmedEmail } : {}),
         phone: trimmedPhone.replace(/\D/g, '')
       });
       updateUser(updated);
       toast.success('Profile updated successfully!');
+      setIsEditing(false);
     } catch (error) {
       toast.error('Failed to update profile');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -215,43 +226,63 @@ const ProfilePage: React.FC = () => {
           </div>
         </div>
         <h2 className="mt-4 text-xl font-semibold">{user?.name || 'User'}</h2>
-        <p className="text-muted-foreground">{user?.email}</p>
+        {visibleEmail(user?.email) && <p className="text-muted-foreground">{visibleEmail(user?.email)}</p>}
       </motion.div>
 
       {/* Personal Details */}
       <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <User className="w-5 h-5 text-primary" /> Personal Details
-        </h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <User className="w-5 h-5 text-primary" /> Personal Details
+          </h3>
+          {!isEditing && (
+            <Button type="button" variant="outline" className="gap-2" onClick={() => setIsEditing(true)}>
+              <Pencil className="w-4 h-4" /> Edit
+            </Button>
+          )}
+        </div>
         <form onSubmit={handleSubmit} className="bg-card rounded-2xl border border-border p-4 sm:p-6 space-y-4 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="name">Full Name</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input id="name" name="name" value={formData.name} onChange={handleChange} className="pl-10" placeholder="John Doe" maxLength={MAX_NAME_LENGTH} />
+                <Input id="name" name="name" value={formData.name} onChange={handleChange} readOnly={!isEditing} aria-readonly={!isEditing} className={`pl-10 ${isEditing ? '' : 'bg-muted/40 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0'}`} placeholder={isEditing ? 'John Doe' : undefined} maxLength={MAX_NAME_LENGTH} />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input id="email" name="email" value={formData.email} onChange={handleChange} className="pl-10" placeholder="john@example.com" />
+                <Input id="email" name="email" value={formData.email} onChange={handleChange} readOnly={!isEditing} aria-readonly={!isEditing} className={`pl-10 ${isEditing ? '' : 'bg-muted/40 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0'}`} placeholder={isEditing ? undefined : 'Not added'} />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="phone">Phone</Label>
               <div className="relative">
                 <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input id="phone" name="phone" value={formData.phone} onChange={handleChange} className="pl-10" placeholder="9876543210" maxLength={10} inputMode="numeric" />
+                <Input id="phone" name="phone" value={formData.phone} onChange={handleChange} readOnly={!isEditing} aria-readonly={!isEditing} className={`pl-10 ${isEditing ? '' : 'bg-muted/40 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0'}`} placeholder={isEditing ? '9876543210' : undefined} maxLength={10} inputMode="numeric" />
               </div>
             </div>
           </div>
-          <div className="flex justify-end pt-2">
-            <Button type="submit" className="gap-2">
-              <Save className="w-4 h-4" /> Save Changes
-            </Button>
-          </div>
+          {isEditing && (
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSaving}
+                onClick={() => {
+                  resetForm();
+                  setIsEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" className="gap-2" disabled={isSaving}>
+                <Save className="w-4 h-4" /> {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
+          )}
         </form>
       </section>
 
@@ -371,11 +402,16 @@ const ProfilePage: React.FC = () => {
       </section>
 
       {/* Account actions */}
-      <section className="space-y-3 pt-4 border-t border-border flex flex-col sm:max-w-xs">
+      <section className="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold">Account</h3>
+          <p className="text-sm text-muted-foreground">Sign out of this device or permanently delete your account.</p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3 sm:shrink-0">
         <Button
           type="button"
-          variant="destructive"
-          className="w-full"
+          variant="outline"
+          className="w-full sm:w-auto sm:min-w-[140px]"
           onClick={async () => {
             await logoutUser();
             navigate('/login', { replace: true });
@@ -390,7 +426,7 @@ const ProfilePage: React.FC = () => {
             <Button
               type="button"
               variant="outline"
-              className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+              className="w-full sm:w-auto sm:min-w-[160px] border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
               <Trash2 className="w-4 h-4 mr-2" />
               Delete Account
@@ -429,6 +465,7 @@ const ProfilePage: React.FC = () => {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        </div>
       </section>
 
       {/* Vehicle Detail Modal */}

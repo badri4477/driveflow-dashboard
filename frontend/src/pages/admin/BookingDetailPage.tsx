@@ -33,6 +33,7 @@ import * as turf from '@turf/turf';
 import { searchVehicleReference } from '@/services/vehicleReferenceService';
 import { sumBookingServicesSubtotal, getBaseServiceOverride } from '@/lib/vehicleServicePricing';
 import { uploadService, invoiceFileName } from '@/services/uploadService';
+import TotalOverrideCard from '@/components/admin/TotalOverrideCard';
 
 
 const BookingDetailPage: React.FC = () => {
@@ -562,6 +563,9 @@ const BookingDetailPage: React.FC = () => {
             <span className={`inline-flex max-w-full shrink-0 px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusBadgeClass(booking.status)}`}>
               {getStatusLabel(booking.status, booking.services || [])}
             </span>
+            {booking.createdByAdmin && (
+              <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">Admin-created</span>
+            )}
           </div>
           <p className="text-muted-foreground text-sm mt-2">Created on {new Date(booking.createdAt).toLocaleString()}</p>
         </div>
@@ -576,7 +580,7 @@ const BookingDetailPage: React.FC = () => {
             </h3>
             <div className="space-y-2 text-sm">
               <p><span className="text-muted-foreground">Name:</span> {customer?.name}</p>
-              <p><span className="text-muted-foreground">Email:</span> {customer?.email}</p>
+              <p><span className="text-muted-foreground">Email:</span> {customer?.email && !customer.email.toLowerCase().endsWith('@customer.carzzi.in') ? customer.email : 'Not added'}</p>
               <p><span className="text-muted-foreground">Phone:</span> {customer?.phone || 'N/A'}</p>
               <button 
                 onClick={() => navigate(`/admin/users/${customer?._id}`)}
@@ -828,8 +832,20 @@ const BookingDetailPage: React.FC = () => {
                 )}
                 {isGeneralService && (
                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Labour Cost:</span>
+                      <span className="font-bold">₹{Number(booking.billing?.labourCost) || 0}</span>
+                   </div>
+                )}
+                {isGeneralService && (
+                   <div className="flex justify-between">
                       <span className="text-muted-foreground">Pickup/Drop Price:</span>
                       <span className="font-bold">₹{booking.billing?.pickupDropPrice || booking.pickupDropPrice || 0}</span>
+                   </div>
+                )}
+                {isGeneralService && (
+                   <div className="flex justify-between">
+                      <span className="text-muted-foreground">GST:</span>
+                      <span className="font-bold">₹{Number(booking.billing?.gst) || 0}</span>
                    </div>
                 )}
                 
@@ -878,6 +894,12 @@ const BookingDetailPage: React.FC = () => {
                   </div>
                 )}
 
+                {booking.totalPriceOverride?.amount != null && (
+                  <div className="flex justify-between">
+                     <span className="text-muted-foreground">Customer Pays (admin override):</span>
+                     <span className="font-bold text-primary">₹{booking.totalPriceOverride.amount}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                    <span className="text-muted-foreground">Status:</span>
                    <span className={`capitalize ${booking.paymentStatus === 'paid' ? 'text-green-600' : 'text-amber-600'}`}>
@@ -895,6 +917,9 @@ const BookingDetailPage: React.FC = () => {
                   </button>
                 )}
              </div>
+             {isGeneralService && (
+               <TotalOverrideCard booking={booking} onUpdated={setBooking} />
+             )}
           </div>
 
           {booking.billing && booking.billing.invoiceNumber && (

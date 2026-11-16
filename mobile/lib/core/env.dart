@@ -60,6 +60,8 @@ class ApiEndpoints {
   static String bookingsForVehicle(String vehicleId) =>
       '/bookings/vehicle/$vehicleId';
   static const String fetchVehicleDetails = '/vehicles/fetch-details';
+  static const String vahanStatus = '/vehicles/vahan/status';
+  static const String vahanLookup = '/vehicles/vahan/lookup';
   static const String vehicleReference = '/vehicle-reference';
   static const String vehicleReferenceSearch = '/vehicle-reference/search';
   static const String vehicleReferenceColumns = '/vehicle-reference/columns';

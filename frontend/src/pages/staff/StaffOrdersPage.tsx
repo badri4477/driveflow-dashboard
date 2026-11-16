@@ -5,6 +5,7 @@ import { Package, CheckCircle, Search, MapPin, Navigation } from 'lucide-react';
 import { bookingService, Booking } from '@/services/bookingService';
 import { useAuthStore } from '@/store/authStore';
 import { socketService } from '@/services/socket';
+import { isBookingAssignedToStaff } from '@/lib/staffAssignment';
 import { staggerContainer, staggerItem } from '@/animations/variants';
 import { toast } from 'sonner';
 import {
@@ -65,7 +66,7 @@ const StaffOrdersPage: React.FC = () => {
 
     // Socket Setup
     socketService.connect();
-    socketService.on('bookingUpdated', (updatedBooking: Booking) => {
+    const bookingUpdatedHandler = (updatedBooking: Booking) => {
         setBookings(prev => {
           const index = prev.findIndex(b => b._id === updatedBooking._id);
           if (index !== -1) {
@@ -73,17 +74,8 @@ const StaffOrdersPage: React.FC = () => {
           }
           
           // Check if this new/updated booking is now assigned to the current staff
-          const staffId = user?._id;
-          const isAssignedToMe = (
-            (updatedBooking.pickupDriver && (
-              (typeof updatedBooking.pickupDriver === 'string' && updatedBooking.pickupDriver === staffId) ||
-              (typeof updatedBooking.pickupDriver === 'object' && updatedBooking.pickupDriver._id === staffId)
-            )) ||
-            (updatedBooking.carWash?.staffAssigned && (
-              (typeof updatedBooking.carWash.staffAssigned === 'string' && updatedBooking.carWash.staffAssigned === staffId) ||
-              (typeof updatedBooking.carWash.staffAssigned === 'object' && updatedBooking.carWash.staffAssigned._id === staffId)
-            ))
-          );
+          const staffId = user?._id || (user as any)?.id;
+          const isAssignedToMe = isBookingAssignedToStaff(updatedBooking, staffId);
 
           if (isAssignedToMe) {
             // Prepend new order if assigned to me and not already in list
@@ -91,10 +83,11 @@ const StaffOrdersPage: React.FC = () => {
           }
           return prev;
         });
-    });
+    };
+    socketService.on('bookingUpdated', bookingUpdatedHandler);
 
     return () => {
-      socketService.off('bookingUpdated');
+      socketService.off('bookingUpdated', bookingUpdatedHandler);
     };
   }, [user?._id]);
 

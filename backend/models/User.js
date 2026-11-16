@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isPlaceholderEmail } from '../utils/placeholderEmail.js';
 import bcrypt from 'bcryptjs';
 
 const MAX_CONSECUTIVE_CHARS = 10;
@@ -232,6 +233,15 @@ const userSchema = new mongoose.Schema({
     default: Date.now,
   },
 });
+
+// Admin-created customers without an email store a placeholder (schema needs
+// one); never expose it in API responses or socket payloads.
+const hidePlaceholderEmail = (doc, ret) => {
+  if (ret && isPlaceholderEmail(ret.email)) ret.email = '';
+  return ret;
+};
+userSchema.set('toJSON', { transform: hidePlaceholderEmail });
+userSchema.set('toObject', { transform: hidePlaceholderEmail });
 
 // Create 2dsphere index on the geo field for geospatial queries
 userSchema.index({ geo: '2dsphere' });

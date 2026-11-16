@@ -12,8 +12,10 @@ import {
   getMerchantBookings,
   getBookingById,
   getBookingByTrackingToken,
+  getBookingSummaryByToken,
   assignBooking,
   updateBookingDetails,
+  setTotalPriceOverride,
   applyCoupon,
   uploadCarWashBeforePhotos,
   uploadCarWashAfterPhotos,
@@ -30,6 +32,7 @@ import {
   updateAvailableServicePincodes,
 } from '../controllers/bookingController.js';
 import { getBookingInvoice, getInvoiceSettings } from '../controllers/bookingInvoiceController.js';
+import { searchCustomersForBooking, adminCreateBooking } from '../controllers/adminBookingController.js';
 
 const router = express.Router();
 
@@ -41,6 +44,8 @@ router.route('/mybookings').get(protect, getMyBookings);
 router.route('/available-slots').get(protect, getAvailableSlots);
 router.route('/available-service-pincodes').get(protect, getAvailableServicePincodes);
 router.route('/invoice-settings').get(protect, getInvoiceSettings);
+router.route('/admin/customers').get(protect, admin, searchCustomersForBooking);
+router.route('/admin/create').post(protect, admin, adminCreateBooking);
 router.route('/admin/slots').get(protect, admin, getAdminSlotsForDate).put(protect, admin, updateAdminSlotBlocks);
 router.route('/admin/available-service-pincodes').put(protect, admin, updateAvailableServicePincodes);
 router.route('/user/:userId').get(protect, getUserBookings);
@@ -59,6 +64,7 @@ router.route('/:id/battery-tire-approval').put(protect, batteryTireApproval);
 router.route('/:id/warranty').put(protect, addWarranty);
 
 router.route('/track/:token').get(getBookingByTrackingToken);
+router.route('/summary/:token').get(getBookingSummaryByToken);
 
 router.route('/:id')
   .get(protect, getBookingById);
@@ -70,6 +76,7 @@ router.post('/:id/generate-otp', protect, generateDeliveryOtp);
 router.post('/:id/verify-otp', protect, verifyDeliveryOtp);
 
 router.route('/:id/details').put(protect, updateBookingDetails);
+router.route('/:id/total-override').put(protect, admin, setTotalPriceOverride); // Admin only
 router.route('/:id/apply-coupon').post(protect, applyCoupon);
 
 router.route('/message/:messageId/approval').put(protect, updateMessageApprovalStatus);

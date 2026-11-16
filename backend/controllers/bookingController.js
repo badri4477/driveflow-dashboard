@@ -23,6 +23,8 @@ import { verifyTrackingToken, createTrackingToken } from '../utils/trackingToken
 import { validateAssignees } from '../utils/assignmentValidation.js';
 import { canAccessBooking } from '../utils/bookingAccess.js';
 import { isCouponDateValid } from '../utils/validation.js';
+import { logAudit } from './auditController.js';
+import { publicEmail } from '../utils/placeholderEmail.js';
 
 export const toPublicTrackingDto = (booking) => {
   const bookingObj = typeof booking.toObject === 'function' ? booking.toObject({ virtuals: true }) : { ...booking };
@@ -65,12 +67,68 @@ const validateImageUrls = (urls) => {
 
 export { createTrackingToken };
 
+/** Public booking summary (customer link from the admin-booking WhatsApp/SMS). No internal or payment-gateway fields. */
+const toBookingSummaryDto = (booking) => {
+  const b = typeof booking.toObject === 'function' ? booking.toObject({ virtuals: true }) : { ...booking };
+  const phone = String(b.user?.phone || '');
+  const services = b.services || [];
+  const isGeneral = services.some((s) => s.category === 'Periodic' || s.category === 'Services' ||
+    (s.name && s.name.toLowerCase().includes('general service')));
+  return {
+    _id: b._id,
+    orderNumber: b.orderNumber,
+    status: b.status,
+    date: b.date,
+    createdAt: b.createdAt,
+    createdByAdmin: !!b.createdByAdmin,
+    customerName: b.user?.name ? String(b.user.name).split(' ')[0] : undefined,
+    maskedPhone: phone ? `${phone.slice(0, 2)}xxxxx${phone.slice(-3)}` : undefined,
+    services: services.map((s) => ({ _id: s._id, name: s.name, category: s.category })),
+    isGeneralService: isGeneral,
+    pickupDropPrice: b.pickupDropPrice || 0,
+    totalAmount: b.totalAmount,
+    discountAmount: b.discountAmount || 0,
+    gstAmount: b.gstAmount || 0,
+    finalAmount: b.finalAmount,
+    paymentStatus: b.paymentStatus,
+    vehicle: b.vehicle
+      ? { make: b.vehicle.make, model: b.vehicle.model, variant: b.vehicle.variant, fuelType: b.vehicle.fuelType, licensePlate: b.vehicle.licensePlate }
+      : undefined,
+    address: b.location?.address,
+  };
+};
+
+// @desc    Public booking summary by signed link token
+// @route   GET /api/bookings/summary/:token
+// @access  Public (token is an HMAC-signed, expiring booking reference)
+export const getBookingSummaryByToken = async (req, res) => {
+  try {
+    const verified = verifyTrackingToken(req.params.token);
+    if (!verified) {
+      return res.status(400).json({ message: 'This booking link is invalid or has expired' });
+    }
+    const booking = await Booking.findById(verified.bookingId)
+      .populate('vehicle', 'make model variant fuelType licensePlate')
+      .populate('services', 'name category')
+      .populate('user', 'name phone');
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    res.json(toBookingSummaryDto(booking));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const sanitizeBooking = (booking, currentUser) => {
   if (!booking) return booking;
 
   const obj = typeof booking.toObject === 'function'
     ? booking.toObject({ virtuals: true })
     : (booking.toJSON ? booking.toJSON() : { ...booking });
+
+  // Admin-created customers have a placeholder email; never expose it.
+  if (obj.user && typeof obj.user === 'object' && 'email' in obj.user) {
+    obj.user.email = publicEmail(obj.user.email);
+  }
 
   if (obj.deliveryOtp) {
     let bookingUserId = null;
@@ -91,6 +149,11 @@ export const sanitizeBooking = (booking, currentUser) => {
         delete obj.deliveryOtp.code;
       }
     }
+  }
+
+  // Override reason/history is admin-only; customers just see the new amounts.
+  if (obj.totalPriceOverride && currentUser?.role !== 'admin') {
+    obj.totalPriceOverride = { amount: obj.totalPriceOverride.amount ?? null };
   }
 
   return obj;
@@ -138,12 +201,12 @@ const normalizePincode = (value) => {
   return digits.length === 6 ? digits : null;
 };
 
-const extractPincodeFromAddress = (address) => {
+export const extractPincodeFromAddress = (address) => {
   const match = String(address || '').match(/(\d{6})(?!\d)/);
   return normalizePincode(match ? match[1] : null);
 };
 
-const getCategoryGroup = (serviceCategory) => {
+export const getCategoryGroup = (serviceCategory) => {
   const cat = (serviceCategory || '').trim();
   if (cat === 'Car Wash' || cat === 'Wash') {
     return 'Car Wash';
@@ -477,7 +540,7 @@ const getBlockedSlotsForDate = async (dateInput, category = 'All') => {
   return new Set(blocks.map((b) => b.slot.trim()));
 };
 
-const isSlotAvailable = async (date, categories = ['All']) => {
+export const isSlotAvailable = async (date, categories = ['All']) => {
   const slotStart = new Date(date);
   const slotLabel = formatTo12HourSlot(slotStart).trim();
   const categoriesToCheck = Array.isArray(categories) ? categories : [categories];
@@ -502,8 +565,8 @@ export const emitBookingUpdate = (booking) => {
     // Clean payload for shared / non-owner rooms (e.g. staff/merchant/public)
     const cleanPayload = sanitizeBooking(payload, null);
 
-    // Notify admin
-    io.to('admin').emit('bookingUpdated', cleanPayload);
+    // Notify admin (keeps admin-only fields such as the total override history)
+    io.to('admin').emit('bookingUpdated', sanitizeBooking(payload, { role: 'admin' }));
 
     // Also notify admin specifically about new bookings
     if (booking.status === 'CREATED') {
@@ -2507,6 +2570,9 @@ export const updateBookingDetails = async (req, res) => {
         if (locked) {
           return res.status(400).json({ message: 'Base service amount can no longer be changed for this booking' });
         }
+        if (booking.totalPriceOverride?.amount != null) {
+          return res.status(400).json({ message: 'An admin has set the price for this order, so the base amount is locked' });
+        }
         if (baseServiceAmount === null || baseServiceAmount === '') {
           booking.baseServiceAmountOverride = null;
         } else {
@@ -2688,6 +2754,195 @@ export const updateBookingDetails = async (req, res) => {
     } else {
       res.status(404).json({ message: 'Booking not found' });
     }
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// @desc    Admin overrides the bill lines (general service) or resets them
+// @route   PUT /api/bookings/:id/total-override
+// @access  Private/Admin
+// Body: { lines: { baseService, partsTotal, labourCost, pickupDrop, gst }, reason? }
+// or { reset: true }. Lines are written to the same fields the merchant bill
+// uses, so every screen, the payment and the invoice follow; the pre-save hook
+// then pins the payable total so later recalculations can't change it.
+const OVERRIDE_LINE_KEYS = ['baseService', 'partsTotal', 'labourCost', 'pickupDrop', 'gst'];
+
+export const setTotalPriceOverride = async (req, res) => {
+  const { lines, reason, reset } = req.body || {};
+  const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+  const isReset = reset === true;
+
+  try {
+    const booking = await Booking.findById(req.params.id).populate('services', 'name category');
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    const isGeneralService = (booking.services || []).some((service) =>
+      service.category === 'Periodic' ||
+      service.category === 'Services' ||
+      (service.name && service.name.toLowerCase().includes('general service'))
+    );
+    if (!isGeneralService) {
+      return res.status(400).json({ message: 'Price override is only available for general service orders' });
+    }
+    if (booking.paymentStatus === 'paid') {
+      return res.status(400).json({ message: 'This order is already paid, so its price can no longer be changed' });
+    }
+    if (booking.status === 'CANCELLED') {
+      return res.status(400).json({ message: 'Cancelled orders cannot be repriced' });
+    }
+
+    if (!booking.totalPriceOverride) booking.totalPriceOverride = {};
+    if (!booking.billing) booking.billing = {};
+    const override = booking.totalPriceOverride;
+    const previousAmount = override.amount ?? null;
+    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const discount = round2(booking.discountAmount);
+
+    const currentLines = async () => ({
+      baseService: round2(await resolveBookingBaseServiceTotal(booking)),
+      partsTotal: round2(
+        booking.billing?.partsTotal != null && Number(booking.billing.partsTotal) > 0
+          ? booking.billing.partsTotal
+          : (booking.parts || []).reduce((acc, p) => acc + (Number(p.price) || 0) * (Number(p.quantity) || 0), 0)
+      ),
+      labourCost: round2(booking.billing?.labourCost),
+      pickupDrop: round2(booking.billing?.pickupDropPrice || booking.pickupDropPrice),
+      gst: round2(booking.billing?.gst),
+    });
+    const writeLines = (l, baseOverride) => {
+      booking.baseServiceAmountOverride = baseOverride;
+      booking.billing.partsTotal = l.partsTotal;
+      booking.billing.labourCost = l.labourCost;
+      booking.billing.pickupDropPrice = l.pickupDrop;
+      booking.billing.gst = l.gst;
+      booking.pickupDropPrice = l.pickupDrop;
+      const total = round2(OVERRIDE_LINE_KEYS.reduce((acc, k) => acc + l[k], 0));
+      booking.billing.total = total;
+      booking.markModified('billing');
+      return total;
+    };
+    const historyEntry = {
+      previousAmount: previousAmount ?? round2(booking.finalAmount),
+      reason: trimmedReason || undefined,
+      by: req.user._id,
+      byName: req.user.name,
+      at: new Date(),
+    };
+
+    if (isReset) {
+      if (previousAmount == null) {
+        return res.status(400).json({ message: 'This order has no price override to reset' });
+      }
+      const original = override.calculatedLines || (await currentLines());
+      // Clear the pin first so the hook leaves the restored totals alone.
+      override.amount = null;
+      const total = writeLines(original, original.baseServiceOverride ?? null);
+      booking.totalAmount = total;
+      booking.finalAmount = Math.max(0, round2(total - discount));
+      booking.gstAmount = override.calculatedGst ?? 0;
+      override.reason = undefined;
+      override.lines = undefined;
+      override.setBy = undefined;
+      override.setAt = undefined;
+      override.calculatedLines = undefined;
+      override.history.push({ ...historyEntry, action: 'reset', amount: booking.finalAmount, calculatedAmount: booking.finalAmount, lines: original });
+    } else {
+      if (!lines || typeof lines !== 'object') {
+        return res.status(400).json({ message: 'Bill lines are required' });
+      }
+      const next = {};
+      for (const key of OVERRIDE_LINE_KEYS) {
+        const v = Number(lines[key] ?? 0);
+        if (!Number.isFinite(v) || v < 0 || v > 999999) {
+          return res.status(400).json({ message: `${key} must be between 0 and 999999` });
+        }
+        next[key] = round2(v);
+      }
+      if (trimmedReason.length > 500) {
+        return res.status(400).json({ message: 'Reason must be 500 characters or fewer' });
+      }
+      // First override: remember the original lines/amounts for reset.
+      if (previousAmount == null) {
+        override.calculatedLines = { ...(await currentLines()), baseServiceOverride: booking.baseServiceAmountOverride ?? null };
+        override.calculatedTotal = round2(booking.totalAmount);
+        override.calculatedFinal = round2(booking.finalAmount);
+        override.calculatedGst = round2(booking.gstAmount);
+      }
+      const total = writeLines(next, next.baseService);
+      const payable = Math.max(0, round2(total - discount));
+      if (payable < 1) {
+        return res.status(400).json({ message: 'The total after discount must be at least ₹1' });
+      }
+      booking.totalAmount = total;
+      override.amount = payable;
+      override.lines = next;
+      override.reason = trimmedReason || undefined;
+      override.setBy = req.user._id;
+      override.setAt = new Date();
+      override.history.push({ ...historyEntry, action: 'set', amount: payable, calculatedAmount: override.calculatedFinal, lines: next });
+    }
+    booking.markModified('totalPriceOverride');
+
+    await booking.save();
+
+    const populated = await Booking.findById(booking._id)
+      .select('+deliveryOtp.code')
+      .populate('user', 'id name email phone')
+      .populate('vehicle')
+      .populate('services')
+      .populate('merchant', 'name email phone location')
+      .populate('pickupDriver', 'name email phone')
+      .populate('technician', 'name email phone')
+      .populate('carWash.staffAssigned', 'name email phone')
+      .populate('batteryTire.warranty.addedBy', 'name email');
+
+    emitBookingUpdate(populated);
+    emitEntitySync('booking', 'updated', sanitizeBooking(populated, null));
+
+    await logAudit({
+      user: req.user._id,
+      action: isReset ? 'BOOKING_TOTAL_OVERRIDE_RESET' : 'BOOKING_TOTAL_OVERRIDE_SET',
+      targetModel: 'Booking',
+      targetId: booking._id,
+      details: {
+        orderNumber: populated.orderNumber,
+        previousAmount: historyEntry.previousAmount,
+        newAmount: populated.finalAmount,
+        reason: trimmedReason || undefined,
+      },
+      ipAddress: req.ip,
+    });
+
+    // Tell the customer the bill changed (push + optional WhatsApp template).
+    setImmediate(async () => {
+      try {
+        const customer = populated.user;
+        if (!customer?._id) return;
+        const orderRef = populated.orderNumber || String(populated._id).slice(-6).toUpperCase();
+        const amountText = `₹${Number(populated.finalAmount).toLocaleString('en-IN')}`;
+        await sendPushToUser(
+          customer._id,
+          'Bill Updated',
+          `The bill for your booking #${orderRef} has been updated to ${amountText}.`,
+          { type: 'billing_update', bookingId: String(populated._id) }
+        );
+        const templateName = process.env.MSG91_WHATSAPP_BILL_UPDATED_TEMPLATE_NAME?.trim();
+        const phone = customer.phone ? normalizeIndianMobile(customer.phone) : null;
+        if (templateName && phone) {
+          await sendWhatsAppMessage(phone, templateName, {
+            body_1: { type: 'text', value: customer.name || 'Customer' },
+            body_2: { type: 'text', value: String(orderRef) },
+            body_3: { type: 'text', value: amountText },
+          });
+        }
+      } catch (err) {
+        console.error('Error sending bill update notification:', err.message);
+      }
+    });
+
+    res.json(sanitizeBooking(populated, req.user));
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

@@ -75,3 +75,29 @@ export const vehicleService = {
         return response.data;
     },
 };
+
+/** Normalised Vahan (Parivahan) lookup result — vehicle attributes only, no owner PII. */
+export interface VahanVehicle {
+    found: boolean;
+    registrationNumber: string;
+    maker: string;
+    makerMasked: boolean;
+    model: string;
+    modelMasked: boolean;
+    fuelRaw: string;
+    fuelType: string;
+    year: number | null;
+    color: string;
+    chassisNumber: string;
+    engineNumber: string;
+    bodyType: string;
+    vehicleClass: string;
+}
+
+export const vahanService = {
+    status: async (): Promise<{ enabled: boolean }> => (await api.get('/vehicles/vahan/status')).data,
+    byRegistration: async (regnNo: string): Promise<VahanVehicle> =>
+        (await api.post('/vehicles/vahan/lookup', { regnNo })).data,
+    byChassisEngine: async (chasiNo: string, engNo: string): Promise<VahanVehicle> =>
+        (await api.post('/vehicles/vahan/lookup', { chasiNo, engNo })).data,
+};

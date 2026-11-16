@@ -101,3 +101,14 @@ export const apiLimiter = rateLimit({
   keyGenerator: (req) => `${rateLimitIdentity(req)}:${req.baseUrl}${req.path}`,
 });
 
+
+// Vahan lookups cost against a daily government quota — cap per user.
+export const vahanLookupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.user?._id ? `u:${req.user._id}` : req.ip),
+  message: { message: 'Too many vehicle lookups. Please wait a while or enter details manually.' },
+  skip: () => getAppEnv() !== 'production',
+});

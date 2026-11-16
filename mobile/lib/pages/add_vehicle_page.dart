@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../core/app_colors.dart';
-import '../../core/form_validation.dart';
 import '../../services/vehicle_service.dart';
 import '../models/vehicle.dart';
+import '../widgets/vahan_lookup_section.dart';
 
 class AddVehiclePage extends StatefulWidget {
   /// When set, the page edits this vehicle (brand/model/variant/
@@ -40,6 +39,10 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
   String? _selectedBrand;
   String? _selectedModel;
   String? _selectedVariant;
+  // Bumped after a Vahan autofill so the searchable fields rebuild with the new values.
+  int _fillTick = 0;
+  // 'auto' | 'manual' once picked under the registration field; details show then.
+  String? _entryMode;
 
   bool get _isEditing => widget.editingVehicle != null;
 
@@ -233,7 +236,69 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     return null;
   }
 
+  String _norm(String s) =>
+      s.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9*]'), '');
+
+  /// Same matching as web lib/vahanMatch.ts: maker strings like
+  /// "HYUNDAI MOTOR INDIA LTD" (or masked "Hy****td") → catalog brand.
+  String? _matchBrand(String maker) {
+    if (maker.isEmpty) return null;
+    final m = _norm(maker);
+    final brands = _brandOptions;
+    if (!m.contains('*')) {
+      final hits =
+          brands.where((b) => b.isNotEmpty && m.contains(_norm(b))).toList()
+            ..sort((a, b) => b.length.compareTo(a.length));
+      if (hits.isNotEmpty) return hits.first;
+      final first = m.length >= 4 ? m.substring(0, 4) : m;
+      for (final b in brands) {
+        if (_norm(b).startsWith(first)) return b;
+      }
+      return null;
+    }
+    final prefix = m.split('*').first;
+    if (prefix.length < 2) return null;
+    final hits = brands.where((b) => _norm(b).startsWith(prefix)).toList();
+    return hits.length == 1 ? hits.first : null;
+  }
+
+  void _applyVahanResult(Map<String, dynamic> r) {
+    final brand = _matchBrand((r['maker'] ?? '').toString());
+    setState(() {
+      if (brand != null) {
+        _selectedBrand = brand;
+        _selectedVariant = null;
+        _selectedModel = null;
+        final vm = (r['model'] ?? '').toString();
+        if (vm.isNotEmpty && !vm.contains('*')) {
+          final nvm = _norm(vm);
+          final hits =
+              _modelOptions
+                  .where((m) => m.isNotEmpty && nvm.contains(_norm(m)))
+                  .toList()
+                ..sort((a, b) => b.length.compareTo(a.length));
+          if (hits.isNotEmpty) _selectedModel = hits.first;
+        }
+      }
+      final fuel = _normalizeFuelType((r['fuelType'] ?? '').toString());
+      if (fuel != null && _fuelOptions.contains(fuel)) _fuelType = fuel;
+      _resetFuelTypeIfInvalid();
+      _fillTick++;
+    });
+    if (_selectedModel != null) _applyReferenceAutofill();
+  }
+
   Future<void> _handleFinalSubmit() async {
+    if (!_isEditing && _entryMode == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Choose Automatic or Manual to add the vehicle details.',
+          ),
+        ),
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     if (_selectedBrand == null ||
         _selectedModel == null ||
@@ -347,78 +412,88 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 24),
-          _buildTextField(
-            'Registration Number',
-            _licensePlateController,
-            'e.g. MH12AB1234',
-            textCapitalization: TextCapitalization.characters,
+          VahanLookupSection(
+            plateController: _licensePlateController,
+            allowLookup: !_isEditing,
+            onResult: _applyVahanResult,
+            onModeChanged: (m) => setState(() => _entryMode = m),
+            describeFill: (_) =>
+                _selectedBrand != null && _selectedModel != null
+                ? 'Brand, model and fuel filled in. Pick the variant and check the details below.'
+                : _selectedBrand != null
+                ? 'Brand filled in. Choose the model and variant below.'
+                : 'Some details are hidden by Vahan without owner consent. Choose brand, model and variant below.',
           ),
-          const SizedBox(height: 16),
-          if (_isLoadingReferences && _allReferences.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+          if (_isEditing || _entryMode != null) ...[
+            const SizedBox(height: 16),
+            if (_isLoadingReferences && _allReferences.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 ),
+              )
+            else ...[
+              _buildAutocompleteField(
+                key: ValueKey('brand-field-$_fillTick'),
+                label: 'Brand',
+                options: _brandOptions,
+                selectedValue: _selectedBrand,
+                onSelected: _onBrandChanged,
+                hint: 'Type to search brand',
+                required: true,
               ),
-            )
-          else ...[
-            _buildAutocompleteField(
-              key: const ValueKey('brand-field'),
-              label: 'Brand',
-              options: _brandOptions,
-              selectedValue: _selectedBrand,
-              onSelected: _onBrandChanged,
-              hint: 'Type to search brand',
-              required: true,
-            ),
+              const SizedBox(height: 16),
+              _buildAutocompleteField(
+                // Resetting the key when the brand changes forces the field to
+                // rebuild with a fresh internal controller, clearing stale text.
+                key: ValueKey('model-field-$_selectedBrand-$_fillTick'),
+                label: 'Model',
+                options: _modelOptions,
+                selectedValue: _selectedModel,
+                onSelected: _onModelChanged,
+                hint: _selectedBrand == null
+                    ? 'Select brand first'
+                    : 'Type to search model',
+                enabled: _selectedBrand != null,
+                required: true,
+                matchAnywhere: true,
+              ),
+              const SizedBox(height: 16),
+              _buildAutocompleteField(
+                key: ValueKey(
+                  'variant-field-$_selectedBrand-$_selectedModel-$_fillTick',
+                ),
+                label: 'Variant/Class',
+                options: _variantOptions,
+                selectedValue: _selectedVariant,
+                onSelected: _onVariantChanged,
+                hint: _selectedModel == null
+                    ? 'Select model first'
+                    : 'Type to search variant',
+                enabled: _selectedModel != null,
+                required: true,
+                matchAnywhere: true,
+              ),
+            ],
             const SizedBox(height: 16),
-            _buildAutocompleteField(
-              // Resetting the key when the brand changes forces the field to
-              // rebuild with a fresh internal controller, clearing stale text.
-              key: ValueKey('model-field-$_selectedBrand'),
-              label: 'Model',
-              options: _modelOptions,
-              selectedValue: _selectedModel,
-              onSelected: _onModelChanged,
-              hint: _selectedBrand == null
-                  ? 'Select brand first'
-                  : 'Type to search model',
-              enabled: _selectedBrand != null,
+            _buildDropdownField(
+              'Fuel Type',
+              // Guard against a DropdownButton assertion error if _fuelType
+              // was set before _fuelOptions had narrowed (e.g. while the
+              // catalog is still loading, or when editing a vehicle whose
+              // saved fuel type is no longer offered for its variant).
+              _fuelOptions.contains(_fuelType) ? _fuelType : null,
+              _fuelOptions,
+              (v) => setState(() => _fuelType = v),
+              hint: 'Select fuel type',
               required: true,
-              matchAnywhere: true,
-            ),
-            const SizedBox(height: 16),
-            _buildAutocompleteField(
-              key: ValueKey('variant-field-$_selectedBrand-$_selectedModel'),
-              label: 'Variant/Class',
-              options: _variantOptions,
-              selectedValue: _selectedVariant,
-              onSelected: _onVariantChanged,
-              hint: _selectedModel == null
-                  ? 'Select model first'
-                  : 'Type to search variant',
-              enabled: _selectedModel != null,
-              required: true,
-              matchAnywhere: true,
             ),
           ],
-          const SizedBox(height: 16),
-          _buildDropdownField(
-            'Fuel Type',
-            // Guard against a DropdownButton assertion error if _fuelType
-            // was set before _fuelOptions had narrowed (e.g. while the
-            // catalog is still loading, or when editing a vehicle whose
-            // saved fuel type is no longer offered for its variant).
-            _fuelOptions.contains(_fuelType) ? _fuelType : null,
-            _fuelOptions,
-            (v) => setState(() => _fuelType = v),
-            hint: 'Select fuel type',
-            required: true,
-          ),
           const SizedBox(height: 32),
           Container(
             width: double.infinity,
@@ -454,92 +529,6 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
           const SizedBox(height: 24),
         ],
       ),
-    );
-  }
-
-  Widget _buildTextField(
-    String label,
-    TextEditingController controller,
-    String hint, {
-    TextInputType? keyboardType,
-    bool required = true,
-    TextCapitalization textCapitalization = TextCapitalization.none,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        TextFormField(
-          controller: controller,
-          keyboardType: keyboardType,
-          textCapitalization: textCapitalization,
-          inputFormatters: keyboardType == TextInputType.number
-              ? [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(4),
-                ]
-              : [
-                  LengthLimitingTextInputFormatter(
-                    FormValidation.maxVehicleFieldLength,
-                  ),
-                ],
-          style: TextStyle(
-            color: isDark ? AppColors.textPrimary : Colors.black87,
-          ),
-          validator: (v) {
-            if (label == 'Registration Number') {
-              return FormValidation.validateLicensePlate(v);
-            }
-            if (label == 'Year') {
-              return FormValidation.validateVehicleYear(v);
-            }
-            return FormValidation.validateVehicleTextField(
-              v,
-              required: required,
-            );
-          },
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: TextStyle(
-              color: isDark ? AppColors.textMuted : AppColors.textMutedLight,
-            ),
-            filled: true,
-            fillColor: isDark
-                ? AppColors.backgroundSecondary
-                : AppColors.backgroundSecondaryLight,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark
-                    ? AppColors.borderColor
-                    : AppColors.borderColorLight,
-              ),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark
-                    ? AppColors.borderColor
-                    : AppColors.borderColorLight,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(
-                color: AppColors.primaryBlue,
-                width: 2,
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -651,6 +640,7 @@ class _SearchableDropdownField extends StatefulWidget {
   final bool required;
   final bool enabled;
   final String? Function(String? raw, List<String> options) matchOption;
+
   /// false (default, e.g. Brand): only options starting with the typed
   /// text match. true (e.g. Model/Variant): the typed text can match
   /// anywhere in the option, so "i20" finds "Elite i20" and "asta" finds
@@ -856,9 +846,7 @@ class _SearchableDropdownFieldState extends State<_SearchableDropdownField> {
               suffixIcon: Icon(
                 Icons.keyboard_arrow_down,
                 color: widget.enabled
-                    ? (isDark
-                          ? AppColors.textMuted
-                          : AppColors.textMutedLight)
+                    ? (isDark ? AppColors.textMuted : AppColors.textMutedLight)
                     : (isDark
                           ? AppColors.textMuted.withValues(alpha: 0.4)
                           : AppColors.textMutedLight.withValues(alpha: 0.4)),

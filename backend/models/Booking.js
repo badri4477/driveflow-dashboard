@@ -242,6 +242,36 @@ const bookingSchema = mongoose.Schema(
     // Merchant-entered base service price (set during inspection). When set
     // it replaces the catalogue services total in every total recalculation.
     baseServiceAmountOverride: { type: Number, default: null },
+    // Set when an admin booked this order on the customer's behalf.
+    createdByAdmin: { type: Boolean, default: false },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Admin override of the amount the customer pays. While `amount` is set
+    // the pre-save hook pins finalAmount to it after every recalculation;
+    // `calculatedTotal` keeps the latest computed (pre-discount) total.
+    totalPriceOverride: {
+      amount: { type: Number, default: null },
+      reason: { type: String },
+      calculatedTotal: { type: Number },
+      calculatedFinal: { type: Number },
+      calculatedGst: { type: Number },
+      // Line values before the first override (restored on reset) and the
+      // admin's current lines: { baseService, partsTotal, labourCost, pickupDrop, gst }.
+      calculatedLines: { type: mongoose.Schema.Types.Mixed },
+      lines: { type: mongoose.Schema.Types.Mixed },
+      setBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      setAt: { type: Date },
+      history: [{
+        action: { type: String, enum: ['set', 'reset'] },
+        amount: { type: Number },
+        previousAmount: { type: Number },
+        calculatedAmount: { type: Number },
+        lines: { type: mongoose.Schema.Types.Mixed },
+        reason: { type: String },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: { type: String },
+        at: { type: Date, default: Date.now },
+      }],
+    },
     manualPayment: {
       markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       markedAt: { type: Date },
@@ -314,6 +344,35 @@ bookingSchema.pre('save', async function () {
   if (!this.isNew) return;
   if (this.orderNumber != null && String(this.orderNumber).trim() !== '') return;
   this.orderNumber = await generateOrderNumber(this.createdAt || new Date());
+});
+
+// Admin total override wins over every recalculation (bill save, parts,
+// approvals, coupons): keep the computed total, then pin the payable amount.
+bookingSchema.pre('save', function () {
+  const override = this.totalPriceOverride;
+  if (override?.amount == null) return;
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const amount = round2(override.amount);
+  const discount = round2(this.discountAmount);
+  const pinnedTotal = round2(amount + discount);
+  if (this.isModified('totalAmount') && round2(this.totalAmount) !== pinnedTotal) {
+    override.calculatedTotal = round2(this.totalAmount);
+  }
+  if (this.isModified('finalAmount') && round2(this.finalAmount) !== amount) {
+    override.calculatedFinal = round2(this.finalAmount);
+  }
+  if (this.isModified('gstAmount') && round2(this.gstAmount) !== 0) {
+    override.calculatedGst = round2(this.gstAmount);
+  }
+  // GST is folded into the admin amount, so displays that add gstAmount
+  // on top of (total - discount) still land on the admin price.
+  this.gstAmount = 0;
+  this.totalAmount = pinnedTotal;
+  this.finalAmount = amount;
+  if (this.billing && this.billing.total != null) {
+    this.billing.total = pinnedTotal;
+    this.markModified('billing');
+  }
 });
 
 const Booking = mongoose.model('Booking', bookingSchema);

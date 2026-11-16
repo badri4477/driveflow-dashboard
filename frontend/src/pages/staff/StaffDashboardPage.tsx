@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Package, Clock, CheckCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -11,6 +11,7 @@ import { staggerContainer, staggerItem } from '@/animations/variants';
 import { toast } from 'sonner';
 import axios from 'axios';
 import { STATUS_LABELS, getStatusLabel } from '@/lib/statusFlow';
+import { isBookingAssignedToStaff } from '@/lib/staffAssignment';
 
 const ACTIVE_STATUSES = [
   'CREATED',
@@ -41,6 +42,8 @@ const StaffDashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const bookingsRef = useRef<Booking[]>([]);
+  bookingsRef.current = bookings;
   const [stats, setStats] = useState({
     todaysOrders: 0,
     pending: 0,
@@ -53,13 +56,10 @@ const StaffDashboardPage: React.FC = () => {
     // Socket Setup
     socketService.connect();
     const bookingUpdatedHandler = (updatedBooking: Booking) => {
-      const staffId = (useAuthStore.getState().user as any)?._id;
-      const isAssignedToMe = (updatedBooking.pickupDriver && (
-        (typeof updatedBooking.pickupDriver === 'string' && updatedBooking.pickupDriver === staffId) ||
-        (typeof updatedBooking.pickupDriver === 'object' && updatedBooking.pickupDriver._id === staffId)
-      ));
-
-      if (isAssignedToMe || bookings.some(b => b._id === updatedBooking._id)) {
+      const user = useAuthStore.getState().user as any;
+      const staffId = user?._id || user?.id;
+      // Refetch on new assignments and on updates to orders already listed.
+      if (isBookingAssignedToStaff(updatedBooking, staffId) || bookingsRef.current.some(b => b._id === updatedBooking._id)) {
         fetchData();
       }
     };
@@ -69,7 +69,7 @@ const StaffDashboardPage: React.FC = () => {
     return () => {
       socketService.off('bookingUpdated', bookingUpdatedHandler);
     };
-  }, [bookings.length]);
+  }, []);
 
   const fetchData = async () => {
     try {

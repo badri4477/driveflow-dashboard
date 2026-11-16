@@ -10,6 +10,7 @@ import { staggerContainer, staggerItem } from '@/animations/variants';
 import { toast } from 'sonner';
 import { getVehicleReference } from '@/services/vehicleReferenceService';
 import { isValidLicensePlate } from '@/lib/formValidation';
+import VahanLookup, { VehicleEntryMode } from '@/components/vehicle/VahanLookup';
 
 export interface ReferenceRecord {
   brand_name?: string;
@@ -173,6 +174,7 @@ const AddVehiclePage: React.FC = () => {
   // same source the admin manages tyre/battery pricing from.
   const [catalog, setCatalog] = useState<ReferenceRecord[]>([]);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
+  const [entryMode, setEntryMode] = useState<VehicleEntryMode>(null);
 
   const [formData, setFormData] = useState({
     licensePlate: '',
@@ -295,6 +297,7 @@ const AddVehiclePage: React.FC = () => {
 
   const resetForm = () => {
     setFormData({ licensePlate: '', make: '', model: '', variant: '', fuel: '', frontTyres: '', rearTyres: '' });
+    setEntryMode(null);
   };
 
   const handleFinalSubmit = async (e: React.FormEvent) => {
@@ -371,18 +374,26 @@ const AddVehiclePage: React.FC = () => {
           <h2 className="text-base sm:text-lg font-semibold mb-4 sm:mb-6">Add New Vehicle</h2>
 
           <form onSubmit={handleFinalSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Vehicle Registration Number</label>
-              <input
-                type="text"
-                name="licensePlate"
-                value={formData.licensePlate}
-                onChange={(e) => setFormData({ ...formData, licensePlate: e.target.value.toUpperCase() })}
-                placeholder="e.g. MH 02 AB 1234"
-                required
-                className="w-full px-4 py-3 bg-muted/50 border border-border rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 uppercase"
-              />
-            </div>
+            <VahanLookup
+              mode={entryMode}
+              onModeChange={setEntryMode}
+              idPrefix="av"
+              plate={formData.licensePlate}
+              onPlateChange={(p) => setFormData((prev) => ({ ...prev, licensePlate: p }))}
+              catalog={catalog}
+              fuelOptions={FUEL_TYPE_OPTIONS}
+              onFill={(fill) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  licensePlate: fill.licensePlate || prev.licensePlate,
+                  make: fill.make || prev.make,
+                  model: fill.make ? fill.model || '' : prev.model,
+                  variant: fill.make ? '' : prev.variant,
+                  fuel: fill.fuelType || prev.fuel,
+                }))
+              }
+            />
+            {entryMode && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <AutocompleteField
                 label="Brand"
@@ -433,6 +444,7 @@ const AddVehiclePage: React.FC = () => {
                 </select>
               </div>
             </div>
+            )}
 
             <div className="flex flex-col sm:flex-row gap-3 pt-4">
               <button

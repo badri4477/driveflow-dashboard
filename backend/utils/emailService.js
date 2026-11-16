@@ -1,6 +1,7 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import dotenv from 'dotenv';
 import { logger } from '../middleware/errorHandler.js';
+import { isPlaceholderEmail } from './placeholderEmail.js';
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ const ses = new SESv2Client({
 const FROM_EMAIL = process.env.SES_FROM_EMAIL || 'support@carzzi.com';
 
 export const sendEmail = async (to, subject, text, html) => {
+  if (!to || isPlaceholderEmail(to)) return;
   if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
     return;
   }

@@ -239,6 +239,33 @@ class VehicleService {
     }
   }
 
+  /// Whether the backend has Vahan (Parivahan) lookup configured.
+  Future<bool> vahanEnabled() async {
+    try {
+      final res = await _api.getAny(ApiEndpoints.vahanStatus);
+      return res is Map && res['enabled'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Vahan lookup by registration number, or by chassis + engine number.
+  /// Throws [ApiException] with a user-facing message on failure.
+  Future<Map<String, dynamic>> vahanLookup({
+    String? regnNo,
+    String? chasiNo,
+    String? engNo,
+  }) async {
+    final body = <String, dynamic>{
+      'regnNo': ?regnNo,
+      'chasiNo': ?chasiNo,
+      'engNo': ?engNo,
+    };
+    final res = await _api.postAny(ApiEndpoints.vahanLookup, body: body);
+    if (res is Map) return Map<String, dynamic>.from(res);
+    throw ApiException(statusCode: 500, message: 'Unexpected response');
+  }
+
   List<Map<String, dynamic>> _asMapList(dynamic res) {
     if (res is! List) return const [];
     return res

@@ -34,6 +34,12 @@ class SocketService {
       reconnectionDelay: 1000,
     });
 
+    // Re-attach listeners registered while there was no socket (or on a
+    // previous one) so pages keep receiving events after a reconnect.
+    this.listeners.forEach((callbacks, event) => {
+      callbacks.forEach((cb) => this.socket?.on(event, cb));
+    });
+
     this.socket.on('connect', () => {
       this.currentRooms.forEach((room) => {
         this.socket?.emit('join', room);
@@ -58,8 +64,8 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
       this.currentRooms.clear();
-      this.listeners.clear();
-      this.globalListeners.clear();
+      // Keep this.listeners: mounted pages still own them and they are
+      // re-attached on the next connect(). Pages remove them via off().
     }
   }
 
@@ -77,7 +83,9 @@ class SocketService {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
-    this.listeners.get(event)!.add(callback);
+    const callbacks = this.listeners.get(event)!;
+    if (callbacks.has(callback)) return;
+    callbacks.add(callback);
     this.socket?.on(event, callback);
   }
 
@@ -87,17 +95,16 @@ class SocketService {
   }
 
   off(event: string, callback?: (data: any) => void) {
-    if (!this.socket) return;
     if (callback) {
       this.listeners.get(event)?.delete(callback);
       this.globalListeners.delete(callback);
-      this.socket.off(event, callback);
+      this.socket?.off(event, callback);
     } else {
       const callbacks = this.listeners.get(event);
       if (callbacks) {
         for (const cb of Array.from(callbacks)) {
           if (!this.globalListeners.has(cb)) {
-            this.socket.off(event, cb);
+            this.socket?.off(event, cb);
             callbacks.delete(cb);
           }
         }
@@ -106,7 +113,6 @@ class SocketService {
   }
 
   offGlobal(event: string, callback: (data: any) => void) {
-    if (!this.socket) return;
     this.globalListeners.delete(callback);
     this.off(event, callback);
   }

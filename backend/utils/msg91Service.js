@@ -6,6 +6,7 @@ import { isOtpExternalDeliveryEnabled, isTestingEnv } from './appEnvironment.js'
 const MSG91_OTP_URL = 'https://control.msg91.com/api/v5/otp';
 const MSG91_VERIFY_URL = 'https://control.msg91.com/api/v5/otp/verify';
 const MSG91_LEGACY_SENDOTP_URL = 'http://api.msg91.com/api/sendotp.php';
+const MSG91_FLOW_URL = 'https://control.msg91.com/api/v5/flow';
 const MSG91_WHATSAPP_URL =
   'https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/';
 
@@ -433,7 +434,27 @@ const verifySignupOtp = async (mobile, otp, pending) => {
   return { delivery: 'msg91' };
 };
 
+/** Transactional SMS through an MSG91 Flow (DLT-approved template). `vars` map to the template's ##var## names. */
+const sendFlowSms = async (mobile, templateId, vars = {}) => {
+  if (!isOtpExternalDeliveryEnabled()) {
+    console.info(`[SMS testing] APP_ENV=testing — skipped SMS (${templateId}) for ${maskMobileForLog(mobile)}`, vars);
+    return { status: 'skipped' };
+  }
+  const authkey = process.env.MSG91_AUTH_KEY;
+  if (!authkey) throw new Error('MSG91_AUTH_KEY is not configured');
+  const response = await axios.post(
+    MSG91_FLOW_URL,
+    { template_id: templateId, short_url: '1', recipients: [{ mobiles: mobile, ...vars }] },
+    { headers: { authkey, 'Content-Type': 'application/json' }, timeout: 15000 }
+  );
+  if (response.data?.type === 'error') {
+    throw new Error(response.data?.message || 'Failed to send SMS');
+  }
+  return response.data;
+};
+
 export {
+  sendFlowSms,
   normalizeIndianMobile,
   sendAuthOtp,
   sendSignupOtp,

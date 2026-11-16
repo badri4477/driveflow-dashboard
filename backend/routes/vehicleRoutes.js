@@ -12,10 +12,15 @@ import {
   updateVehicleHealth,
 } from '../controllers/vehicleController.js';
 import { protect, admin, merchant } from '../middleware/authMiddleware.js';
+import { vahanLookup, vahanStatus } from '../controllers/vahanController.js';
+import { vahanLookupLimiter } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
 
 router.put('/:id/health', protect, updateVehicleHealth);
+
+router.get('/vahan/status', protect, vahanStatus);
+router.post('/vahan/lookup', protect, vahanLookupLimiter, vahanLookup);
 
 router.post('/rc-details', protect, getVehicleRCDetails);
 router.post('/fetch-details', protect, fetchVehicleDetails);

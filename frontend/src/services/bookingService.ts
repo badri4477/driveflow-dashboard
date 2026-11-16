@@ -2,6 +2,77 @@ import api from './api';
 import { Vehicle } from './vehicleService';
 import { Service } from './serviceService';
 
+export interface OverrideLines {
+  baseService: number;
+  partsTotal: number;
+  labourCost: number;
+  pickupDrop: number;
+  gst: number;
+}
+
+export interface TotalPriceOverrideEntry {
+  action: 'set' | 'reset';
+  amount?: number;
+  previousAmount?: number;
+  calculatedAmount?: number;
+  lines?: OverrideLines;
+  reason?: string;
+  byName?: string;
+  at: string;
+}
+
+export interface TotalPriceOverride {
+  amount: number | null;
+  reason?: string;
+  calculatedTotal?: number;
+  calculatedFinal?: number;
+  lines?: OverrideLines;
+  setAt?: string;
+  history?: TotalPriceOverrideEntry[];
+}
+
+export interface AdminCustomerResult {
+  _id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  addresses?: { label?: string; address: string; lat?: number; lng?: number }[];
+  vehicles: { _id: string; make: string; model: string; variant?: string; fuelType?: string; licensePlate: string; year?: number }[];
+}
+
+export interface AdminCreateBookingPayload {
+  customer: { userId: string } | { name: string; phone: string; email?: string };
+  vehicle: { vehicleId: string } | { make: string; model: string; variant?: string; fuelType?: string; licensePlate: string; frontTyres?: string; rearTyres?: string };
+  serviceIds: string[];
+  selectedBrands?: Record<string, string>;
+  serviceQuantities?: Record<string, number>;
+  date: string;
+  location: { address: string; lat?: number; lng?: number };
+  notes?: string;
+  merchantId?: string;
+}
+
+export interface BookingSummary {
+  _id: string;
+  orderNumber?: string;
+  status: string;
+  date: string;
+  createdAt?: string;
+  createdByAdmin: boolean;
+  customerName?: string;
+  maskedPhone?: string;
+  services: { _id: string; name: string; category: string }[];
+  isGeneralService: boolean;
+  pickupDropPrice: number;
+  totalAmount: number;
+  discountAmount: number;
+  gstAmount: number;
+  finalAmount: number;
+  paymentStatus: string;
+  vehicle?: { make: string; model: string; variant?: string; fuelType?: string; licensePlate?: string };
+  address?: string;
+}
+
 export interface Booking {
   _id: string;
   orderNumber?: string | number;
@@ -16,8 +87,12 @@ export interface Booking {
   discountAmount?: number;
   coupon?: any;
   pickupDropPrice?: number;
+  /** True when an admin booked this order on the customer's behalf. */
+  createdByAdmin?: boolean;
   /** Merchant-set base service price (inspection). Overrides the catalogue price when set. */
   baseServiceAmountOverride?: number | null;
+  /** Admin override of the payable total (general service). Customers only receive `amount`. */
+  totalPriceOverride?: TotalPriceOverride | null;
   selectedBrands?: Record<string, string>;
   serviceQuantities?: Record<string, number>;
   notes?: string;
@@ -207,6 +282,24 @@ export const bookingService = {
     return response.data;
   },
 
+  /** Public: booking summary from the signed link sent to the customer. */
+  getBookingSummary: async (token: string): Promise<BookingSummary> => {
+    const response = await api.get(`/bookings/summary/${encodeURIComponent(token)}`);
+    return response.data;
+  },
+
+  /** Admin: search customers (name/phone/email) with their saved vehicles. */
+  searchCustomersForBooking: async (q: string): Promise<AdminCustomerResult[]> => {
+    const response = await api.get('/bookings/admin/customers', { params: { q } });
+    return response.data;
+  },
+
+  /** Admin: create a booking for a customer (new customer/vehicle created in the same request). */
+  adminCreateBooking: async (data: AdminCreateBookingPayload): Promise<Booking & { summaryUrl?: string }> => {
+    const response = await api.post('/bookings/admin/create', data);
+    return response.data;
+  },
+
   getAdminSlots: async (date: string, category: string = 'All'): Promise<{ date: string; category: string; allSlots: string[]; blockedSlots: string[]; bookedSlots: string[] }> => {
     const response = await api.get('/bookings/admin/slots', { params: { date, category } });
     return response.data;
@@ -290,6 +383,15 @@ export const bookingService = {
     assignedAt?: string;
   }) => {
     const response = await api.put(`/bookings/${id}/assign`, data);
+    return response.data;
+  },
+
+  /** Admin: override each bill line (general service) with a reason, or reset. */
+  setTotalPriceOverride: async (
+    id: string,
+    data: { lines: OverrideLines; reason?: string } | { reset: true; reason?: string }
+  ) => {
+    const response = await api.put(`/bookings/${id}/total-override`, data);
     return response.data;
   },
 

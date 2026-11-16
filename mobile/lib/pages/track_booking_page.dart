@@ -1772,6 +1772,19 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                     if (finalTotal <= 0) {
                       finalTotal = orderTotals.total;
                     }
+                    // Admin total override: the gap between the line items
+                    // and the admin price, shown so the bill adds up.
+                    double overrideAdjustment = 0;
+                    if (booking.totalPriceOverrideAmount != null) {
+                      final lineSum = servicesTotal +
+                          parts +
+                          labour +
+                          merchantGst +
+                          (isGeneralService ? pickup : 0);
+                      overrideAdjustment =
+                          ((finalTotal + discount - lineSum) * 100).round() /
+                              100;
+                    }
                     final isDeliveredStatus =
                         booking.status.toUpperCase() == 'DELIVERED';
                     final canShowTopReviewCta =
@@ -3164,6 +3177,12 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                                     '₹${booking.pickupDropPrice ?? booking.billing?.pickupDropPrice}',
                                     isDark,
                                   ),
+                                if (overrideAdjustment != 0)
+                                  _buildCostRow(
+                                    'Price adjustment',
+                                    '${overrideAdjustment < 0 ? '-' : ''}₹${formatInrAmount(overrideAdjustment.abs())}',
+                                    isDark,
+                                  ),
                                 if ((booking.discountAmount ?? 0) > 0)
                                   _buildCalculationBreakdown(
                                     booking: booking,
@@ -3267,6 +3286,12 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                                   _buildCostRow(
                                     'Additional Parts/Service',
                                     '₹${booking.partsAndOtherTotal}',
+                                    isDark,
+                                  ),
+                                if (overrideAdjustment != 0)
+                                  _buildCostRow(
+                                    'Price adjustment',
+                                    '${overrideAdjustment < 0 ? '-' : ''}₹${formatInrAmount(overrideAdjustment.abs())}',
                                     isDark,
                                   ),
                                 const SizedBox(height: 8),
