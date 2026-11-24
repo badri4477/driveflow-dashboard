@@ -190,8 +190,6 @@ const SocketNotificationListener = () => {
               navigate(`/admin/bookings/${data._id}`);
             } else if (userRole === 'merchant') {
               navigate(`/merchant/orders/${data._id}`);
-            } else if (userRole === 'customer') {
-              navigate(`/track/${data._id}`);
             } else if (userRole === 'staff') {
               navigate(`/staff/order/${data._id}`);
             }

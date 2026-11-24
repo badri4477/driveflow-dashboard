@@ -71,7 +71,7 @@ const compressImage = (file: File): Promise<File> => {
 
 
 /** e.g. "Carzzi_Invoice_INV2026102904.jpg" — keeps the uploaded file's extension. */
-export const invoiceFileName = (fileUrl: string, orderNumber?: string | null) => {
+export const invoiceFileName = (fileUrl: string, orderNumber?: string | number | null) => {
   const ext = (fileUrl.split('?')[0].match(/\.([a-zA-Z0-9]{2,5})$/)?.[1] || 'pdf').toLowerCase();
   return `Carzzi_Invoice_${orderNumber || 'booking'}.${ext}`;
 };
