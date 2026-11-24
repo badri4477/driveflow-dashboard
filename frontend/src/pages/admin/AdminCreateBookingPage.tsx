@@ -330,7 +330,7 @@ const AdminCreateBookingPage: React.FC = () => {
     if (!isValidLicensePlate(newVehicle.licensePlate.trim().toUpperCase())) {
       errors.licensePlate = 'Enter a valid registration number (e.g. MH 02 AB 1234).';
     }
-    if (!entryMode && !errors.licensePlate) errors.licensePlate = 'Choose Automatic or Manual to add the vehicle details.';
+    if (!entryMode && !errors.licensePlate) errors.licensePlate = 'Click Search to look up the vehicle details.';
     if (!newVehicle.make) errors.make = 'Select a brand from the suggestions.';
     if (!newVehicle.model) errors.model = 'Select a model from the suggestions.';
     if (!newVehicle.variant) errors.variant = 'Select a variant from the suggestions.';

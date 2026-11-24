@@ -6,9 +6,9 @@ import '../core/app_colors.dart';
 import '../core/form_validation.dart';
 import '../services/vehicle_service.dart';
 
-/// Registration field with optional automatic Vahan (Parivahan) lookup —
-/// parity with web `components/vehicle/VahanLookup.tsx`.
-/// Automatic: Vahan lookup by registration no.; Manual: fill details yourself.
+/// Registration no. + Search (Vahan) — parity with web
+/// `components/vehicle/VahanLookup.tsx`. Success fills the details
+/// ('auto'); failure opens the manual fields ('manual').
 class VahanLookupSection extends StatefulWidget {
   final TextEditingController plateController;
 
@@ -21,7 +21,7 @@ class VahanLookupSection extends StatefulWidget {
   /// Rendered under the result line to tell the user what got filled.
   final String Function(Map<String, dynamic> result)? describeFill;
 
-  /// 'auto' or 'manual' once the user picks; parent shows the detail fields then.
+  /// 'auto' after a successful search, 'manual' after a failed one.
   final ValueChanged<String>? onModeChanged;
 
   const VahanLookupSection({
@@ -38,14 +38,17 @@ class VahanLookupSection extends StatefulWidget {
 }
 
 class _VahanLookupSectionState extends State<VahanLookupSection> {
-  final _service = VehicleService();
+  static final _manualSuffix = RegExp(
+    r'\s*Please enter (them|details) manually\.?$',
+    caseSensitive: false,
+  );
 
-  bool? _auto; // null until the user picks Automatic or Manual
+  final _service = VehicleService();
   bool _loading = false;
   String? _error;
   Map<String, dynamic>? _result;
 
-  Future<void> _fetch() async {
+  Future<void> _search() async {
     FocusScope.of(context).unfocus();
     setState(() {
       _error = null;
@@ -61,129 +64,75 @@ class _VahanLookupSectionState extends State<VahanLookupSection> {
     try {
       final res = await _service.vahanLookup(regnNo: plate);
       widget.onResult(res);
+      widget.onModeChanged?.call('auto');
       if (mounted) setState(() => _result = res);
     } on ApiException catch (e) {
-      if (mounted) {
-        setState(
-          () => _error = e.message.isNotEmpty
-              ? e.message
-              : 'Could not fetch vehicle details. Please enter them manually.',
-        );
-      }
+      _failed(e.message);
     } catch (_) {
-      if (mounted) {
-        setState(
-          () => _error =
-              'Could not fetch vehicle details. Please enter them manually.',
-        );
-      }
+      _failed('');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  InputDecoration _decoration(BuildContext context, String hint) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: TextStyle(
-        color: isDark ? AppColors.textMuted : AppColors.textMutedLight,
-      ),
-      filled: true,
-      fillColor: isDark
-          ? AppColors.backgroundSecondary
-          : AppColors.backgroundSecondaryLight,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none,
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+  void _failed(String message) {
+    final base = message.replaceAll(_manualSuffix, '').trim();
+    widget.onModeChanged?.call('manual');
+    if (!mounted) return;
+    setState(
+      () => _error =
+          '${base.isEmpty ? 'Could not fetch vehicle details.' : base} '
+          'Please fill in the details below.',
     );
   }
 
-  Widget _label(BuildContext context, String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Text(
-      text,
-      style: Theme.of(
-        context,
-      ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-    ),
-  );
-
-  Widget _field(
-    BuildContext context,
-    TextEditingController c,
-    String hint, {
-    String? Function(String?)? validator,
-  }) {
+  Widget _plateField(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return TextFormField(
-      controller: c,
-      textCapitalization: TextCapitalization.characters,
-      inputFormatters: [
-        LengthLimitingTextInputFormatter(25),
-        FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9 ]')),
-      ],
-      style: TextStyle(color: isDark ? AppColors.textPrimary : Colors.black87),
-      validator: validator,
-      decoration: _decoration(context, hint),
-    );
-  }
-
-  Widget _plateField(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      _label(context, 'Registration Number'),
-      _field(
-        context,
-        widget.plateController,
-        'e.g. MH12AB1234',
-        validator: FormValidation.validateLicensePlate,
-      ),
-    ],
-  );
-
-  void _pick(bool auto) {
-    setState(() {
-      _auto = auto;
-      _error = null;
-    });
-    widget.onModeChanged?.call(auto ? 'auto' : 'manual');
-    if (auto) _fetch();
-  }
-
-  Widget _modeButton(bool auto) {
-    final selected = _auto == auto;
-    final icon = auto ? Icons.bolt : Icons.edit_outlined;
-    final label = auto ? 'Automatic (Vahan)' : 'Manual';
-    final child = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (auto && _loading)
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        else
-          Icon(icon, size: 18),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            auto && _loading ? 'Fetching…' : label,
-            overflow: TextOverflow.ellipsis,
+        Text(
+          'Registration Number',
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: widget.plateController,
+          textCapitalization: TextCapitalization.characters,
+          textInputAction: TextInputAction.search,
+          onFieldSubmitted: widget.allowLookup && !_loading
+              ? (_) => _search()
+              : null,
+          inputFormatters: [
+            LengthLimitingTextInputFormatter(15),
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9 ]')),
+          ],
+          style: TextStyle(
+            color: isDark ? AppColors.textPrimary : Colors.black87,
+          ),
+          validator: FormValidation.validateLicensePlate,
+          decoration: InputDecoration(
+            hintText: 'e.g. MH12AB1234',
+            hintStyle: TextStyle(
+              color: isDark ? AppColors.textMuted : AppColors.textMutedLight,
+            ),
+            filled: true,
+            fillColor: isDark
+                ? AppColors.backgroundSecondary
+                : AppColors.backgroundSecondaryLight,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
           ),
         ),
       ],
-    );
-    final onPressed = _loading ? null : () => _pick(auto);
-    return SizedBox(
-      height: 48,
-      child: selected
-          ? FilledButton(onPressed: onPressed, child: child)
-          : OutlinedButton(onPressed: onPressed, child: child),
     );
   }
 
@@ -191,115 +140,159 @@ class _VahanLookupSectionState extends State<VahanLookupSection> {
   Widget build(BuildContext context) {
     if (!widget.allowLookup) return _plateField(context);
     final theme = Theme.of(context);
+    final r = _result;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _plateField(context),
-        const SizedBox(height: 16),
-        Text(
-          'How do you want to add vehicle details?',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontWeight: FontWeight.w600,
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: _loading ? null : _search,
+            icon: _loading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.search),
+            label: Text(_loading ? 'Searching…' : 'Search'),
           ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: _modeButton(true)),
-            const SizedBox(width: 8),
-            Expanded(child: _modeButton(false)),
-          ],
-        ),
-        if (_auto == true) ...[
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Semantics(
-              liveRegion: true,
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Semantics(
+            liveRegion: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 18,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (r != null) ...[
+          const SizedBox(height: 12),
+          Semantics(
+            liveRegion: true,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: theme.dividerColor),
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 18,
-                    color: theme.colorScheme.error,
-                  ),
+                  const Icon(Icons.check_circle, size: 18, color: Colors.green),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      _error!,
-                      style: TextStyle(color: theme.colorScheme.error),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          [
+                            'Found ${(r['registrationNumber'] ?? '').toString().isNotEmpty ? r['registrationNumber'] : 'vehicle'}',
+                            if (r['year'] != null) '${r['year']}',
+                            if ((r['fuelType'] ?? '').toString().isNotEmpty)
+                              '${r['fuelType']}',
+                          ].join(' · '),
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        if (widget.describeFill != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.describeFill!(r),
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-            Wrap(
-              children: [
-                TextButton(
-                  onPressed: _loading ? null : _fetch,
-                  child: const Text('Retry'),
-                ),
-                TextButton(
-                  onPressed: () => _pick(false),
-                  child: const Text('Enter manually'),
-                ),
-              ],
-            ),
-          ],
-          if (_result != null) ...[
-            const SizedBox(height: 12),
-            Semantics(
-              liveRegion: true,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: theme.dividerColor),
-                ),
+          ),
+        ],
+        if (r != null &&
+            r['details'] is List &&
+            (r['details'] as List).isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _VahanDetailsTile(
+            details: (r['details'] as List).whereType<Map>().toList(),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Full Vahan output (owner details are stripped server-side) — web parity
+/// with `VahanDetailsPanel.tsx`; the PDF download is web-only for now.
+class _VahanDetailsTile extends StatelessWidget {
+  final List<Map> details;
+  const _VahanDetailsTile({required this.details});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.dividerColor),
+      ),
+      child: Theme(
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          title: Text(
+            'Full Vahan details (${details.length} fields)',
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+          children: [
+            for (final d in details)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(
-                      Icons.check_circle,
-                      size: 18,
-                      color: Colors.green,
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        '${d['label'] ?? ''}',
+                        style: theme.textTheme.bodySmall,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            [
-                              'Found ${(_result!['registrationNumber'] ?? '').toString().isNotEmpty ? _result!['registrationNumber'] : 'vehicle'}',
-                              if (_result!['year'] != null)
-                                '${_result!['year']}',
-                              if ((_result!['fuelType'] ?? '')
-                                  .toString()
-                                  .isNotEmpty)
-                                '${_result!['fuelType']}',
-                            ].join(' · '),
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          if (widget.describeFill != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              widget.describeFill!(_result!),
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ],
-                        ],
+                      flex: 3,
+                      child: Text(
+                        '${d['value'] ?? ''}${d['masked'] == true ? ' (hidden by Vahan)' : ''}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
           ],
-        ],
-      ],
+        ),
+      ),
     );
   }
 }

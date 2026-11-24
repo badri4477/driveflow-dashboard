@@ -65,7 +65,8 @@ api.interceptors.response.use(
       });
     }
 
-    showGlobalErrorToast(error);
+    // The Vahan lookup shows its own inline message and falls back to manual entry.
+    if (!String(error.config?.url || '').includes('/vehicles/vahan/')) showGlobalErrorToast(error);
 
     if (error.response?.status === 401 || error.response?.status === 403) {
       const errorCode = error.response.data?.code;

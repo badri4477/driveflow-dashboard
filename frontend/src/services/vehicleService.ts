@@ -92,12 +92,14 @@ export interface VahanVehicle {
     engineNumber: string;
     bodyType: string;
     vehicleClass: string;
+    /** Every non-personal field Vahan returned (owner name/address are stripped server-side). */
+    details?: { key: string; label: string; value: string; masked: boolean }[];
 }
 
 export const vahanService = {
     status: async (): Promise<{ enabled: boolean }> => (await api.get('/vehicles/vahan/status')).data,
     byRegistration: async (regnNo: string): Promise<VahanVehicle> =>
-        (await api.post('/vehicles/vahan/lookup', { regnNo })).data,
+        (await api.post('/vehicles/vahan/lookup', { regnNo }, { timeout: 30000 })).data,
     byChassisEngine: async (chasiNo: string, engNo: string): Promise<VahanVehicle> =>
         (await api.post('/vehicles/vahan/lookup', { chasiNo, engNo })).data,
 };

@@ -385,9 +385,7 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     if (!_isEditing && _entryMode == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Choose Automatic or Manual to add the vehicle details.',
-          ),
+          content: Text('Tap Search to look up the vehicle details.'),
         ),
       );
       return;
@@ -587,38 +585,41 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
               required: true,
             ),
           ],
-          const SizedBox(height: 32),
-          Container(
-            width: double.infinity,
-            height: 54,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [AppColors.primaryBlue, AppColors.primaryBlueDark],
+          // Save shows only after Search (or when editing), with the fields.
+          if (_isEditing || _entryMode != null) ...[
+            const SizedBox(height: 32),
+            Container(
+              width: double.infinity,
+              height: 54,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [AppColors.primaryBlue, AppColors.primaryBlueDark],
+                ),
+                borderRadius: BorderRadius.circular(12),
               ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: ElevatedButton(
-              onPressed: _isLoading ? null : _handleFinalSubmit,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-                foregroundColor: AppColors.textPrimary,
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        color: AppColors.textPrimary,
-                        strokeWidth: 2,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _handleFinalSubmit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  foregroundColor: AppColors.textPrimary,
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          color: AppColors.textPrimary,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text(
+                        _isEditing ? 'Update Vehicle' : 'Save Vehicle',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                    )
-                  : Text(
-                      _isEditing ? 'Update Vehicle' : 'Save Vehicle',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
+              ),
             ),
-          ),
+          ],
           const SizedBox(height: 24),
         ],
       ),

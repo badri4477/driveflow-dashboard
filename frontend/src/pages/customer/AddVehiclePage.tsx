@@ -448,6 +448,8 @@ const AddVehiclePage: React.FC = () => {
             </div>
             )}
 
+            {/* Cancel / Confirm appear with the fields, after Search. */}
+            {entryMode && (
             <div className="flex flex-col sm:flex-row gap-3 pt-4">
               <button
                 type="button"
@@ -464,6 +466,7 @@ const AddVehiclePage: React.FC = () => {
                 {isLoading ? 'Adding...' : 'Confirm Vehicle'}
               </button>
             </div>
+            )}
           </form>
         </motion.div>
       )}

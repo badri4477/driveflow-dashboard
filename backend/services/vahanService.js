@@ -225,7 +225,64 @@ export const normalizeVehicle = (payload) => {
     seatCapacity: pick(d, 'rcSeatCap'),
     rcStatus: pick(d, 'rcStatus'),
     consentStatus: clean(payload?.consentStatus),
+    details: buildDetails(d),
   };
+};
+
+// Labels for the full "vehicle details" report (web panel + PDF, mobile list), in display order.
+const FIELD_LABELS = [
+  ['rcRegnNo', 'Registration number'],
+  ['rcStatus', 'RC status'],
+  ['rcMakerDesc', 'Maker'],
+  ['rcMakerModel', 'Model'],
+  ['rcVhClassDesc', 'Vehicle class'],
+  ['rcVchCatg', 'Vehicle category'],
+  ['rcBodyTypeDesc', 'Body type'],
+  ['rcFuelDesc', 'Fuel'],
+  ['rcColor', 'Colour'],
+  ['rcManuMonthYr', 'Manufactured (month/year)'],
+  ['rcRegnDt', 'Registration date'],
+  ['rcRegnUpto', 'Registration valid till'],
+  ['rcFitUpto', 'Fitness valid till'],
+  ['rcInsuranceUpto', 'Insurance valid till'],
+  ['rcInsuranceComp', 'Insurance company'],
+  ['rcPuccUpto', 'PUCC valid till'],
+  ['rcTaxUpto', 'Tax valid till'],
+  ['rcNormsDesc', 'Emission norms'],
+  ['rcCubicCap', 'Engine capacity (cc)'],
+  ['rcNoCyl', 'Cylinders'],
+  ['rcSeatCap', 'Seating capacity'],
+  ['rcWheelbase', 'Wheelbase (mm)'],
+  ['rcGvw', 'Gross weight (kg)'],
+  ['rcUnldWt', 'Unladen weight (kg)'],
+  ['rcVhType', 'Vehicle type'],
+  ['rcRegisteredAt', 'Registered at (RTO)'],
+  ['rcOwnerCdDesc', 'Owner type'],
+  ['rcOwnerSr', 'Owner serial no.'],
+  ['rcChasiNo', 'Chassis number'],
+  ['rcEngNo', 'Engine number'],
+  ['rcBlackListStatus', 'Blacklist status'],
+  ['rcNocDetails', 'NOC details'],
+];
+const LABEL_MAP = new Map(FIELD_LABELS);
+// Personal data never leaves the server, even in the full report.
+const PII_RE = /(OwnerName|FName|Father|Address|Financer|Mobile|Email|Phone|Aadhaar|Aadhar|Pan(No)?$|SaleAmt)/i;
+const humanize = (k) =>
+  k.replace(/^rc/, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+
+/** Every non-personal field Vahan returned, as [{ key, label, value, masked }] in a stable order. */
+const buildDetails = (d) => {
+  const keys = Object.keys(d).filter((k) => !PII_RE.test(k) && clean(d[k]));
+  const order = (k) => {
+    const i = FIELD_LABELS.findIndex(([key]) => key === k);
+    return i === -1 ? FIELD_LABELS.length : i;
+  };
+  return keys
+    .sort((a, b) => order(a) - order(b) || a.localeCompare(b))
+    .map((k) => {
+      const value = clean(d[k]);
+      return { key: k, label: LABEL_MAP.get(k) || humanize(k), value, masked: isMasked(value) };
+    });
 };
 
 // ---- public API -----------------------------------------------------------
@@ -243,7 +300,7 @@ export const lookupByRegistration = async (regnNo) => {
   const cached = cacheGet(key);
   if (cached) return cached;
   const payload = await authedPost('/api/getVehicleDetailsByRegnNo', { userId: cfg().clientId, regnNo: plate });
-  if (process.env.APP_ENV !== 'production') console.log('[vahan] raw response for', plate, JSON.stringify(payload));
+  if (process.env.VAHAN_DEBUG === 'true') console.log('[vahan] raw response for', plate, JSON.stringify(payload));
   if (!payload?.vehicleData || payload.success === false) throw new VahanError('No vehicle found for this registration number', 404, 'VAHAN_NOT_FOUND');
   const out = normalizeVehicle(payload);
   if (!out.registrationNumber) out.registrationNumber = plate;
