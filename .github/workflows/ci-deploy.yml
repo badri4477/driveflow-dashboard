@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a main run midway: it may be deploying.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:
@@ -48,7 +49,27 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
+      # Production VITE_* values (copy of the server's frontend/.env), baked in at build time.
+      - name: Write production env
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          FRONTEND_ENV: ${{ secrets.FRONTEND_ENV }}
+        run: |
+          if [ -z "$FRONTEND_ENV" ]; then
+            echo "::error::Secret FRONTEND_ENV is missing (paste the server's frontend/.env into it)."; exit 1
+          fi
+          printf '%s\n' "$FRONTEND_ENV" > .env.production
+          grep -q '^VITE_API_URL=' .env.production || { echo "::error::FRONTEND_ENV has no VITE_API_URL"; exit 1; }
       - run: npm run build   # tsc -b && vite build
+      - name: Package dist for deploy
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: tar -czf ../frontend-dist.tgz -C dist .
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: frontend-dist
+          path: frontend-dist.tgz
+          retention-days: 7
 
   deploy:
     name: Deploy to production (EC2)
@@ -60,26 +81,37 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+      - name: Upload built frontend to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: frontend-dist.tgz
+          target: /tmp/carzzi-deploy
+          overwrite: true
       - name: Run scripts/deploy.sh on the server
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: 22
-          command_timeout: 20m
+          command_timeout: 15m
           # Pull first so the server always runs the latest deploy.sh.
-          # The app lives in root's home (pm2 runs as root), so run it via sudo;
+          # The app lives in root's home (pm2 runs as root), so it runs via sudo;
           # falls back to the login user's home if the app is there instead.
           script: |
             set -e
+            TGZ=/tmp/carzzi-deploy/frontend-dist.tgz
             if [ -d "$HOME/driveflow-dashboard/.git" ]; then
               cd "$HOME/driveflow-dashboard"
               git pull --ff-only origin main
-              bash scripts/deploy.sh
+              DIST_TGZ="$TGZ" bash scripts/deploy.sh
             elif sudo test -d /root/driveflow-dashboard/.git; then
-              sudo -i bash -c 'cd /root/driveflow-dashboard && git pull --ff-only origin main && bash scripts/deploy.sh'
+              sudo -i bash -c "cd /root/driveflow-dashboard && git pull --ff-only origin main && DIST_TGZ=$TGZ bash scripts/deploy.sh"
             else
               echo "driveflow-dashboard not found in $HOME or /root"; exit 1
             fi

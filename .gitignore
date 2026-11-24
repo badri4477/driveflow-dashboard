@@ -37,3 +37,5 @@ keystore/
 **/key.properties
 *.jks
 *.keystore
+# deploy.sh state
+backend/.deploy-lock-hash
