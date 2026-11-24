@@ -30,7 +30,18 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
   String? _fuelType = 'Petrol';
   String? _year;
 
-  static const _fuelTypeOptions = ['Petrol', 'Diesel', 'EV'];
+  static const _fuelTypeOptions = ['Petrol', 'Diesel', 'EV', 'CNG', 'Hybrid'];
+
+  /// Catalogue rows have a year range ("2016–2020" / "2021 onwards"); true
+  /// when the row covers [year], or when the year/range is unknown.
+  static bool _rowCoversYear(Map<String, dynamic> r, int? year) {
+    final from = int.tryParse('${r['year_from'] ?? ''}');
+    if (year == null || year <= 0 || from == null || from <= 0) return true;
+    final to = int.tryParse('${r['year_to'] ?? ''}');
+    return year >= from && (to == null || year <= to);
+  }
+
+  int? get _selectedYear => int.tryParse(_year ?? '');
 
   /// Current year back to 1990, newest first — parity with web.
   static final _yearOptions = List.generate(
@@ -117,13 +128,19 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
 
   List<String> get _variantOptions {
     if (_selectedBrand == null || _selectedModel == null) return [];
+    final rows = _allReferences
+        .where(
+          (r) =>
+              (r['brand_name'] ?? '').toString() == _selectedBrand &&
+              (r['model'] ?? '').toString() == _selectedModel,
+        )
+        .toList();
+    // Only variants sold in the chosen year, when the catalogue has a period for it.
+    final inYear = rows.where((r) => _rowCoversYear(r, _selectedYear)).toList();
     final set = <String>{};
-    for (final r in _allReferences) {
-      if ((r['brand_name'] ?? '').toString() == _selectedBrand &&
-          (r['model'] ?? '').toString() == _selectedModel) {
-        final v = (r['brand_model'] ?? '').toString().trim();
-        if (v.isNotEmpty) set.add(v);
-      }
+    for (final r in (inYear.isNotEmpty ? inYear : rows)) {
+      final v = (r['brand_model'] ?? '').toString().trim();
+      if (v.isNotEmpty) set.add(v);
     }
     return set.toList()..sort();
   }
@@ -153,23 +170,27 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
 
   Map<String, dynamic>? get _matchedReference {
     if (_selectedBrand == null || _selectedModel == null) return null;
-    // Prefer the row with the fuel already chosen (e.g. Diesel from Vahan) over the first row.
-    Map<String, dynamic>? first;
-    for (final r in _allReferences) {
+    // Prefer the chosen year's period, then the fuel already chosen (e.g.
+    // Diesel from Vahan) — parity with web AddVehiclePage.
+    final rows = _allReferences.where((r) {
       final matchesVariant =
           _selectedVariant == null ||
           (r['brand_model'] ?? '').toString() == _selectedVariant;
-      if ((r['brand_name'] ?? '').toString() == _selectedBrand &&
+      return (r['brand_name'] ?? '').toString() == _selectedBrand &&
           (r['model'] ?? '').toString() == _selectedModel &&
-          matchesVariant) {
-        if (_fuelType != null &&
-            _normalizeFuelType(r['fuel_type']?.toString()) == _fuelType) {
-          return r;
-        }
-        first ??= r;
+          matchesVariant;
+    }).toList();
+    final yearRows = rows
+        .where((r) => _rowCoversYear(r, _selectedYear))
+        .toList();
+    final pool = yearRows.isNotEmpty ? yearRows : rows;
+    for (final r in pool) {
+      if (_fuelType != null &&
+          _normalizeFuelType(r['fuel_type']?.toString()) == _fuelType) {
+        return r;
       }
     }
-    return first;
+    return pool.isEmpty ? null : pool.first;
   }
 
   /// Clears _fuelType if it's no longer one of the options offered for the
@@ -234,7 +255,9 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     final v = (raw ?? '').trim().toLowerCase();
     if (v == 'petrol') return 'Petrol';
     if (v == 'diesel') return 'Diesel';
-    if (v == 'ev' || v == 'electric') return 'EV';
+    if (v.contains('hybrid')) return 'Hybrid';
+    if (v.contains('cng')) return 'CNG';
+    if (v == 'ev' || v.contains('electric')) return 'EV';
     return null;
   }
 
@@ -289,8 +312,12 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     'MT',
     'AMT',
   };
+  // "HTK+" (catalogue) and "HTK PLUS" (Vahan) are the same trim — parity
+  // with web vahanMatch.ts.
   List<String> _words(String s) => s
       .toUpperCase()
+      .replaceAll(RegExp(r'\s*\+'), 'PLUS')
+      .replaceAll(RegExp(r'\s+PLUS\b'), 'PLUS')
       .replaceAll(RegExp(r'[()]'), ' ')
       .split(RegExp(r'[^A-Z0-9]+'))
       .where((w) => w.length >= 2 && !_trimNoise.contains(w))
@@ -334,7 +361,12 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
           _normalizeFuelType(r['fuel_type']?.toString()) == fuel) {
         score += 3;
       }
-      if (year != null) {
+      final from = int.tryParse('${r['year_from'] ?? ''}');
+      if (year != null && from != null && from > 0) {
+        // Catalogue rows carry a year range: the manufacturing year must
+        // fall inside it (PDF lookup rule) — parity with web vahanMatch.ts.
+        score += _rowCoversYear(r, year) ? 4 : -4;
+      } else if (year != null) {
         final ys = RegExp(
           r'(19|20)\d{2}',
         ).allMatches(v).map((m) => int.parse(m.group(0)!)).toList();
@@ -594,7 +626,10 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
               'Year',
               _year,
               _yearOptions,
-              (v) => setState(() => _year = v),
+              (v) {
+                setState(() => _year = v);
+                _applyReferenceAutofill(); // year picks the catalogue period
+              },
               hint: 'Select year',
               required: true,
             ),

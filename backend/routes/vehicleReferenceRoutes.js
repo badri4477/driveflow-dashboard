@@ -11,7 +11,19 @@ import {
   saveHiddenBuiltinColumnsToS3,
   getBuiltinColumnLabelsFromS3,
   saveBuiltinColumnLabelsToS3,
+  saveDataToS3,
 } from '../utils/s3Storage.js';
+import {
+  FUEL_TYPES,
+  normalizeFuel,
+  normalizeBody,
+  parseYearRange,
+  parseTyreSize,
+  isCatalogWorkbook,
+  parseCatalogSheet,
+  findCatalogMatch,
+  pricedView,
+} from '../utils/vehicleCatalog.js';
 import crypto from 'crypto';
 import { protect, admin } from '../middleware/authMiddleware.js';
 import { emitEntitySync } from '../utils/syncService.js';
@@ -54,15 +66,8 @@ const fieldNameForColumn = (category, key) => `${CATEGORY_PREFIX[category]}${key
 const RESERVED_RECORD_KEYS = new Set(['_id', 'createdAt', 'updatedAt', '__proto__', 'constructor', 'prototype']);
 const SAFE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/i;
 
-const FUEL_TYPES = ['Petrol', 'Diesel', 'EV'];
-
-const normalizeFuelType = (value) => {
-  const clean = String(value || '').trim().toLowerCase();
-  if (!clean) return '';
-  if (clean === 'ev' || clean === 'electric') return 'EV';
-  const match = FUEL_TYPES.find((f) => f.toLowerCase() === clean);
-  return match || '';
-};
+// Legacy-format imports: same normalisation as the catalogue (adds CNG/Hybrid).
+const normalizeFuelType = normalizeFuel;
 
 const extractDynamicFields = (body, knownKeys) => {
   const extra = {};
@@ -99,6 +104,41 @@ router.post('/import', protect, admin, upload.single('file'), asyncHandler(async
     }
 
     console.log('Total raw rows found:', rawRows.length);
+
+    // ---- Carzzi catalogue workbook (Brand / Model / Variant / Year Range / …) ----
+    // The workbook is the master list, so it REPLACES the whole catalogue
+    // (the previous data is backed up to S3 first) instead of merging.
+    if (isCatalogWorkbook((rawRows[0] || []).map((h) => String(h || '')))) {
+      const { records, tyreColumns, errors } = parseCatalogSheet(rawRows);
+      if (records.length === 0) {
+        return res.status(400).json({ message: 'No vehicle rows found in the workbook', errors: errors.slice(0, 20) });
+      }
+
+      const previous = await getVehicleDataFromS3();
+      const backupKey = `backups/vehicle_reference_data_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      if (previous.length) await saveDataToS3(backupKey, previous);
+
+      const now = new Date().toISOString();
+      const data = records.map((r) => ({ _id: crypto.randomUUID(), ...r, createdAt: now, updatedAt: now }));
+      await saveVehicleDataToS3(data);
+
+      // Tyre pattern columns come straight from the sheet; there are no
+      // battery price columns any more (battery is quoted by Carzzi), and the
+      // old built-in brand columns have no data, so hide all of them.
+      const columns = tyreColumns.map(({ header, ...c }) => ({ ...c, createdAt: now }));
+      await saveVehicleReferenceColumnsToS3(columns);
+      await saveHiddenBuiltinColumnsToS3(BUILTIN_COLUMNS.map((c) => c.key));
+      emitEntitySync('vehicle_reference_column', 'updated', { columns });
+      emitEntitySync('vehicle_reference', 'updated', { replaced: true, count: data.length });
+
+      return res.status(200).json({
+        message: `Catalogue replaced: ${data.length} vehicles, ${columns.length} tyre price columns`,
+        count: data.length,
+        replacedCount: previous.length,
+        backupKey: previous.length ? backupKey : null,
+        warnings: errors.slice(0, 50),
+      });
+    }
 
     // Find header row (the one containing "brand_name" or "brand_model" or "Model")
     let headerRowIndex = -1;
@@ -606,10 +646,22 @@ router.get('/', asyncHandler(async (req, res) => {
 // @route   GET /api/vehicle-reference/search
 // @access  Public/Private
 router.get('/search', asyncHandler(async (req, res) => {
-  const { brand_name, model, variant, fuel_type } = req.query;
+  const { brand_name, model, variant, fuel_type, year } = req.query;
 
   if (!brand_name || !model) {
     return res.status(400).json({ message: 'Brand and Model are required' });
+  }
+
+  // Catalogue rows (with year ranges): PDF lookup rules, and prices a booking
+  // can't be charged at come back as "Contact Carzzi" (see pricedView).
+  const catalog = await getVehicleDataFromS3();
+  if (catalog.some((r) => r.year_range !== undefined)) {
+    const m = findCatalogMatch(catalog, { brand: brand_name, model, variant, fuel: fuel_type, year });
+    if (!m.row) return res.status(404).json({ message: 'Vehicle data not found' });
+    return res.json({
+      ...pricedView(m.row, m.confident),
+      _match: { confident: m.confident, yearMatched: m.yearMatched, variantMatched: m.variantMatched },
+    });
   }
 
   const cleanBrand = brand_name.trim().toLowerCase();
@@ -692,30 +744,36 @@ router.post('/', protect, admin, asyncHandler(async (req, res) => {
     tyre_price_bridgestone, tyre_price_yokohama, tyre_price_apollo, tyre_price_michelin,
     tyre_price_dummy2, tyre_price_dummy, battery_price_amaron, battery_price_exide, car_wash_price,
     car_wash_exterior_price, car_wash_interior_exterior_price, car_wash_interior_exterior_underbody_price,
-    general_service_price, fuel_type
+    general_service_price, fuel_type, year_range, body_type, tyre_size
   } = req.body;
+  const fuel = fuel_type ? normalizeFuel(fuel_type) : '';
 
   if (!brand_name || !model || !brand_model) {
     return res.status(400).json({ message: 'Brand, Model, and Brand Model (Variant) are required' });
   }
-  if (fuel_type && !FUEL_TYPES.includes(fuel_type)) {
+  if (fuel_type && !fuel) {
     return res.status(400).json({ message: `Fuel type must be one of: ${FUEL_TYPES.join(', ')}` });
+  }
+  const yr = parseYearRange(year_range);
+  if (year_range && yr.from === null) {
+    return res.status(400).json({ message: 'Year Range must look like 2016–2020 or 2021 onwards' });
   }
 
   const allData = await getVehicleDataFromS3();
   // Same variant name is allowed more than once as long as the fuel type
   // differs (e.g. a "Luxury Edition" offered in both Petrol and Diesel) —
   // only an exact brand + model + variant + fuel type match is a duplicate.
-  const normalizedFuelType = (fuel_type || '').toLowerCase();
+  const normalizedFuelType = fuel.toLowerCase();
   const exists = allData.find(item =>
     item.brand_name.toLowerCase() === brand_name.toLowerCase() &&
     item.model.toLowerCase() === model.toLowerCase() &&
     item.brand_model.toLowerCase() === brand_model.toLowerCase() &&
-    (item.fuel_type || '').toLowerCase() === normalizedFuelType
+    (item.fuel_type || '').toLowerCase() === normalizedFuelType &&
+    String(item.year_range || '').trim() === String(year_range || '').trim()
   );
 
   if (exists) {
-    return res.status(400).json({ message: 'Vehicle reference with this brand, model, variant and fuel type already exists' });
+    return res.status(400).json({ message: 'Vehicle reference with this brand, model, variant, year range and fuel type already exists' });
   }
 
   const knownKeys = new Set([
@@ -724,7 +782,7 @@ router.post('/', protect, admin, asyncHandler(async (req, res) => {
     'tyre_price_michelin', 'tyre_price_dummy2', 'tyre_price_dummy', 'battery_price_amaron',
     'battery_price_exide', 'car_wash_price', 'car_wash_exterior_price',
     'car_wash_interior_exterior_price', 'car_wash_interior_exterior_underbody_price',
-    'general_service_price', 'fuel_type',
+    'general_service_price', 'fuel_type', 'year_range', 'year_from', 'year_to', 'body_type', 'tyre_size',
   ]);
   // Any additional admin-defined brand columns (e.g. tyre_price_continental)
   // ride along in the request body and get merged in as-is.
@@ -752,7 +810,13 @@ router.post('/', protect, admin, asyncHandler(async (req, res) => {
     car_wash_interior_exterior_price,
     car_wash_interior_exterior_underbody_price,
     general_service_price,
-    fuel_type: fuel_type || '',
+    fuel_type: fuel,
+    year_range: String(year_range || '').trim(),
+    year_from: yr.from,
+    year_to: yr.to,
+    body_type: normalizeBody(body_type),
+    tyre_size: String(tyre_size || '').trim(),
+    ...(tyre_size ? { front_tyres: parseTyreSize(tyre_size).front, rear_tyres: parseTyreSize(tyre_size).rear } : {}),
     ...dynamicFields,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -773,6 +837,7 @@ router.put('/:id', protect, admin, asyncHandler(async (req, res) => {
   const index = allData.findIndex(item => item._id === req.params.id);
 
   if (index !== -1) {
+    if (req.body.fuel_type) req.body.fuel_type = normalizeFuel(req.body.fuel_type) || req.body.fuel_type;
     if (req.body.fuel_type && !FUEL_TYPES.includes(req.body.fuel_type)) {
       return res.status(400).json({ message: `Fuel type must be one of: ${FUEL_TYPES.join(', ')}` });
     }
@@ -783,9 +848,22 @@ router.put('/:id', protect, admin, asyncHandler(async (req, res) => {
       'tyre_price_michelin', 'tyre_price_dummy2', 'tyre_price_dummy', 'battery_price_amaron',
       'battery_price_exide', 'car_wash_price', 'car_wash_exterior_price',
       'car_wash_interior_exterior_price', 'car_wash_interior_exterior_underbody_price',
-      'general_service_price', 'fuel_type',
+      'general_service_price', 'fuel_type', 'year_range', 'year_from', 'year_to', 'body_type', 'tyre_size',
     ]);
     const dynamicFields = extractDynamicFields(req.body, updateKnownKeys);
+    const catalogFields = {};
+    if (req.body.year_range !== undefined) {
+      const yr = parseYearRange(req.body.year_range);
+      if (String(req.body.year_range).trim() && yr.from === null) {
+        return res.status(400).json({ message: 'Year Range must look like 2016–2020 or 2021 onwards' });
+      }
+      Object.assign(catalogFields, { year_range: String(req.body.year_range).trim(), year_from: yr.from, year_to: yr.to });
+    }
+    if (req.body.body_type !== undefined) catalogFields.body_type = normalizeBody(req.body.body_type);
+    if (req.body.tyre_size !== undefined) {
+      const ts = parseTyreSize(req.body.tyre_size);
+      Object.assign(catalogFields, { tyre_size: String(req.body.tyre_size).trim(), front_tyres: ts.front, rear_tyres: ts.rear });
+    }
 
     const updatedVehicle = {
       ...allData[index],
@@ -811,6 +889,7 @@ router.put('/:id', protect, admin, asyncHandler(async (req, res) => {
       general_service_price: req.body.general_service_price !== undefined ? req.body.general_service_price : allData[index].general_service_price,
       fuel_type: req.body.fuel_type !== undefined ? req.body.fuel_type : allData[index].fuel_type,
       ...dynamicFields,
+      ...catalogFields,
       updatedAt: new Date().toISOString()
     };
 

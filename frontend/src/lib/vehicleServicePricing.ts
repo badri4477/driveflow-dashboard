@@ -101,7 +101,8 @@ export function getServiceUnitPrice(
   }
 
   if (isTire && selectedTireBrand && vehicleRef) {
-    const brandKey = `tyre_price_${selectedTireBrand.toLowerCase().replace(/\s+/g, '')}`;
+    // Catalogue tyre fields are alphanumeric slugs ("Yokohama Earth-1 Max" → yokohamaearth1max).
+    const brandKey = `tyre_price_${selectedTireBrand.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
     const price = vehicleRef[brandKey];
     if (price != null) {
       const n = Number(price);
@@ -132,7 +133,27 @@ export function getServiceUnitPrice(
     if (price != null && price > 0) return price;
   }
 
+  // Vehicle-priced items without a catalogue price (blank / Contact Carzzi /
+  // battery / no catalogue row) are booked at ₹0 and quoted by Carzzi — same
+  // as backend calculateServicesTotal. Other services keep their flat price.
+  if (isDirectPricingColumn || isGeneral || isWash || isBattery) return 0;
   return Number(service.price || 0);
+}
+
+/** True when getServiceUnitPrice returns a Carzzi-quote ₹0 for this line. */
+export function isQuoteServiceLine(
+  service: Service,
+  vehicleRef: VehicleReferenceRecord,
+  selectedTireBrand?: string,
+): boolean {
+  const isBattery = isBatteryService(service);
+  if (isTireService(service) && !isBattery) return false;
+  const vehiclePriced =
+    Boolean(service.vehiclePricingColumn && service.vehiclePricingColumn !== 'tyre_brand') ||
+    isGeneralServiceItem(service) ||
+    isCarWashService(service) ||
+    isBattery;
+  return vehiclePriced && getServiceUnitPrice(service, vehicleRef, selectedTireBrand) === 0;
 }
 
 /** Sum service line prices using vehicle reference data when available. */

@@ -160,7 +160,16 @@ export const AutocompleteField: React.FC<{
   );
 };
 
-export const FUEL_TYPE_OPTIONS = ['Petrol', 'Diesel', 'EV'];
+export const FUEL_TYPE_OPTIONS = ['Petrol', 'Diesel', 'EV', 'CNG', 'Hybrid'];
+
+/** Catalogue rows have a year range; true when the row covers this year (or the year/range is unknown). */
+export const rowCoversYear = (r: ReferenceRecord, year: string | number | undefined) => {
+  const y = Number(year);
+  const from = Number(r.year_from);
+  if (!y || !Number.isFinite(from) || from <= 0) return true;
+  const to = r.year_to === null || r.year_to === undefined || r.year_to === '' ? Infinity : Number(r.year_to);
+  return y >= from && y <= to;
+};
 
 /** Current year back to 1990, newest first. */
 const YEAR_OPTIONS = Array.from({ length: new Date().getFullYear() - 1989 }, (_, i) => String(new Date().getFullYear() - i));
@@ -229,14 +238,15 @@ const AddVehiclePage: React.FC = () => {
   const variantOptions = useMemo(() => {
     if (!formData.make || !formData.model) return [];
     const set = new Set<string>();
-    catalog.forEach((r) => {
-      if ((r.brand_name || '') === formData.make && (r.model || '') === formData.model) {
-        const v = (r.brand_model || '').trim();
-        if (v) set.add(v);
-      }
+    const rows = catalog.filter((r) => (r.brand_name || '') === formData.make && (r.model || '') === formData.model);
+    // Only variants sold in the chosen year, when the catalogue has a period for it.
+    const inYear = rows.filter((r) => rowCoversYear(r, formData.year));
+    (inYear.length ? inYear : rows).forEach((r) => {
+      const v = (r.brand_model || '').trim();
+      if (v) set.add(v);
     });
     return Array.from(set).sort();
-  }, [catalog, formData.make, formData.model]);
+  }, [catalog, formData.make, formData.model, formData.year]);
 
   // Fuel types actually offered for the selected brand/model(/variant) in
   // the catalog — e.g. an Elite i20 2018 Asta(O) only has Petrol/Diesel
@@ -267,8 +277,10 @@ const AddVehiclePage: React.FC = () => {
         (r.model || '') === formData.model &&
         (!formData.variant || (r.brand_model || '') === formData.variant)
     );
-    // Prefer the row with the fuel already chosen (e.g. Diesel from Vahan) over the first row.
-    const match = rows.find((r) => formData.fuel && r.fuel_type === formData.fuel) || rows[0];
+    // Prefer the chosen year's period, then the fuel already chosen (e.g. Diesel from Vahan).
+    const yearRows = rows.filter((r) => rowCoversYear(r, formData.year));
+    const pool = yearRows.length ? yearRows : rows;
+    const match = pool.find((r) => formData.fuel && r.fuel_type === formData.fuel) || pool[0];
     if (!match) return;
     setFormData((prev) => ({
       ...prev,
@@ -278,7 +290,7 @@ const AddVehiclePage: React.FC = () => {
         ? (match.fuel_type as string)
         : prev.fuel,
     }));
-  }, [catalog, formData.make, formData.model, formData.variant]);
+  }, [catalog, formData.make, formData.model, formData.variant, formData.year]);
 
   // If the vehicle selection narrows and the currently picked fuel type is
   // no longer one of the options offered for it, clear it rather than

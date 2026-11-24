@@ -25,6 +25,7 @@ import { canAccessBooking } from '../utils/bookingAccess.js';
 import { isCouponDateValid } from '../utils/validation.js';
 import { logAudit } from './auditController.js';
 import { publicEmail } from '../utils/placeholderEmail.js';
+import { findCatalogMatchForVehicle, numericPrice } from '../utils/vehicleCatalog.js';
 
 export const toPublicTrackingDto = (booking) => {
   const bookingObj = typeof booking.toObject === 'function' ? booking.toObject({ virtuals: true }) : { ...booking };
@@ -264,57 +265,26 @@ export const calculateServicesTotal = async (serviceIds, vehicleId, selectedBran
       return [byLabel?.fieldName, naiveFieldName].filter(Boolean);
     };
 
-    let refMatch = null;
-    if (vehicle) {
-      const clean = (value) =>
-        String(value || '')
-          .replace(/\[[^\]]*\]/g, '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .toLowerCase();
-      const exactMatches = (value, search) => clean(value) === search;
-      const partialMatches = (value, search) => clean(value).includes(search);
-
-      const cleanBrand = clean(vehicle.make);
-      const fullModel = clean(vehicle.model);
-      const cleanModel = clean(String(vehicle.model || '').replace(/\[.*\]/g, ''));
-      const cleanVariant = vehicle.variant ? clean(vehicle.variant) : '';
-      const cleanFuelType = clean(vehicle.fuelType);
-
-      const fuelTypeMatches = (item) => clean(item.fuel_type) === cleanFuelType;
-      const findWithFuelTypePreference = (matchFn) => {
-        if (cleanFuelType) {
-          const fuelMatch = allRefData.find((item) => matchFn(item) && fuelTypeMatches(item));
-          if (fuelMatch) return fuelMatch;
-        }
-        return allRefData.find(matchFn);
-      };
-
-      if (cleanVariant) {
-        refMatch = findWithFuelTypePreference((item) =>
-          exactMatches(item.brand_name, cleanBrand) &&
-          (exactMatches(item.model, fullModel) || exactMatches(item.model, cleanModel)) &&
-          exactMatches(item.brand_model, cleanVariant)
-        );
-      }
-
-      refMatch ??= findWithFuelTypePreference((item) =>
-        exactMatches(item.brand_name, cleanBrand) &&
-        (exactMatches(item.model, fullModel) || exactMatches(item.model, cleanModel))
-      );
-
-      refMatch ??= findWithFuelTypePreference((item) =>
-        exactMatches(item.brand_name, cleanBrand) &&
-        (partialMatches(item.model, fullModel) || partialMatches(item.model, cleanModel))
-      );
-    }
+    // Catalogue lookup (PDF rules: brand, model, year range, fuel, then
+    // variant). Prices are only charged from a confident match — a variant
+    // missing from the catalogue or a year outside every period goes to
+    // Carzzi for a quote instead of borrowing a near-miss row's price.
+    const match = vehicle ? findCatalogMatchForVehicle(allRefData, vehicle) : { row: null, confident: false };
+    const refMatch = match.confident ? match.row : null;
 
     let total = 0;
-    // Services where a brand was selected (or inferred) but the matched
-    // vehicle reference row has no valid (numeric, >0) price for that
-    // brand — e.g. marked "Not Available" in admin. Booking these should
-    // be rejected rather than silently falling back to the generic price.
+    // Brand chosen but no numeric price for it on this vehicle's row — the
+    // booking is rejected so the customer picks an available brand.
     const unavailableBrandServices = [];
+    // Vehicle-priced items with no numeric price (blank / NA / PENDING /
+    // "Contact Carzzi" / no catalogue match / battery): booked at ₹0 and
+    // priced by Carzzi later.
+    const quoteServices = [];
+    const needsQuote = (service, reason) => {
+      quoteServices.push({ serviceId: service._id.toString(), serviceName: service.name, reason });
+      return 0;
+    };
+
     services.forEach(service => {
       const isWash = service.category === 'Car Wash' || service.category === 'Wash';
       const isBattery =
@@ -335,118 +305,72 @@ export const calculateServicesTotal = async (serviceIds, vehicleId, selectedBran
       const qty = Number(normalizedQuantities[service._id.toString()] || normalizedQuantities[service._id] || 1);
       let servicePrice = service.price;
 
-      // Admin-selected pricing column (set in Add/Edit Service) takes
-      // priority over the name-substring heuristics below — explicit and
-      // not dependent on how the service happens to be worded.
-      let pricedFromColumn = false;
-      // 'tyre_brand'/'battery_brand' are sentinels, not real VehicleReference
-      // fields — they route into the per-brand isTire/isBattery logic below
-      // instead of a direct column lookup.
+      // Admin-selected pricing column (Add/Edit Service) wins over the
+      // name heuristics. 'tyre_brand'/'battery_brand' are sentinels for the
+      // per-brand branches below.
       const isDirectPricingColumn =
         service.vehiclePricingColumn &&
         service.vehiclePricingColumn !== 'tyre_brand' &&
         service.vehiclePricingColumn !== 'battery_brand';
-      if (isDirectPricingColumn && refMatch) {
-        const columnPrice = refMatch[service.vehiclePricingColumn];
-        const priceNum = Number(columnPrice);
-        if (columnPrice && !isNaN(priceNum) && priceNum > 0) {
-          servicePrice = priceNum;
-          pricedFromColumn = true;
-        }
-      }
 
-      if (pricedFromColumn) {
-        // Already priced from the explicit column above — skip the
-        // name-heuristic branches below.
-      } else if (isGeneral && refMatch) {
-        const generalPrice = Number(refMatch.general_service_price);
-        if (refMatch.general_service_price && !isNaN(generalPrice) && generalPrice > 0) {
-          servicePrice = generalPrice;
+      if (isDirectPricingColumn) {
+        const price = refMatch ? numericPrice(refMatch[service.vehiclePricingColumn]) : null;
+        servicePrice = price ?? needsQuote(service, refMatch ? 'no_price' : 'no_catalogue_match');
+      } else if (isGeneral) {
+        const price = refMatch ? numericPrice(refMatch.general_service_price) : null;
+        servicePrice = price ?? needsQuote(service, refMatch ? 'no_price' : 'no_catalogue_match');
+      } else if (isWash) {
+        let price = null;
+        if (refMatch) {
+          const sName = service.name.toLowerCase();
+          let raw = null;
+          if (sName.includes('exterior wash') && !sName.includes('interior')) {
+            raw = refMatch.car_wash_exterior_price;
+          } else if (sName.includes('interior + exterior') && !sName.includes('underbody')) {
+            raw = refMatch.car_wash_interior_exterior_price;
+          } else if (sName.includes('full wash') || sName.includes('underbody wash') || (sName.includes('interior') && sName.includes('exterior') && sName.includes('underbody'))) {
+            raw = refMatch.car_wash_interior_exterior_underbody_price;
+          }
+          price = numericPrice(raw) ?? numericPrice(refMatch.car_wash_price);
         }
-      } else if (isWash && refMatch) {
-        let washPrice = null;
-        const sName = service.name.toLowerCase();
-
-        if (sName.includes('exterior wash') && !sName.includes('interior')) {
-          washPrice = refMatch.car_wash_exterior_price;
-        } else if (sName.includes('interior + exterior') && !sName.includes('underbody')) {
-          washPrice = refMatch.car_wash_interior_exterior_price;
-        } else if (sName.includes('underbody wash') || (sName.includes('interior') && sName.includes('exterior') && sName.includes('underbody'))) {
-          washPrice = refMatch.car_wash_interior_exterior_underbody_price;
-        }
-
-        // Fallback to legacy car_wash_price if specific one is not set
-        if (!washPrice || washPrice === '') {
-          washPrice = refMatch.car_wash_price;
-        }
-
-        const priceNum = Number(washPrice);
-        if (washPrice && !isNaN(priceNum) && priceNum > 0) {
-          servicePrice = priceNum;
-        }
-      } else if (isBattery && refMatch) {
+        servicePrice = price ?? needsQuote(service, refMatch ? 'no_price' : 'no_catalogue_match');
+      } else if (isBattery) {
+        // The catalogue has no battery prices: battery replacement is quoted
+        // by Carzzi after confirming fitment (Battery Details identifies it).
+        // A numeric brand column, if an admin adds one later, is still used.
         let selectedBrand = normalizedBrands[service._id.toString()] || normalizedBrands[service._id];
-        if (!selectedBrand && service.name) {
-          const nameLower = service.name.toLowerCase();
-          if (nameLower.includes('amaron')) selectedBrand = 'Amaron';
-          else if (nameLower.includes('exide')) selectedBrand = 'Exide';
-        }
-        console.log('Battery price matching:', { serviceId: service._id, name: service.name, selectedBrand, selectedBrands: normalizedBrands });
-        if (selectedBrand) {
-          const candidateFieldNames = resolveBrandFieldNames('battery', selectedBrand);
-          let brandPrice = null;
-          let priceNum = NaN;
-          for (const fieldName of candidateFieldNames) {
-            const candidate = refMatch[fieldName];
-            const candidateNum = Number(candidate);
-            if (candidate && !isNaN(candidateNum) && candidateNum > 0) {
-              brandPrice = candidate;
-              priceNum = candidateNum;
-              break;
-            }
+        let price = null;
+        if (selectedBrand && refMatch) {
+          for (const fieldName of resolveBrandFieldNames('battery', selectedBrand)) {
+            price = numericPrice(refMatch[fieldName]);
+            if (price !== null) break;
           }
-          console.log('Resolved battery brand price:', { candidateFieldNames, brandPrice, priceNum });
-          if (brandPrice && !isNaN(priceNum) && priceNum > 0) {
-            servicePrice = priceNum;
-          } else {
-            console.log('Invalid battery brand price, falling back to service.price', service.price);
-            unavailableBrandServices.push({ serviceId: service._id.toString(), serviceName: service.name, brand: selectedBrand });
-          }
-        } else {
-          console.log('No battery brand selected or matched, falling back to service.price', service.price);
         }
-      } else if (isTire && refMatch) {
+        servicePrice = price ?? needsQuote(service, 'battery_quote');
+      } else if (isTire) {
         const selectedBrand = normalizedBrands[service._id.toString()] || normalizedBrands[service._id];
-        console.log('Tyre price matching:', { serviceId: service._id, name: service.name, selectedBrand, selectedBrands: normalizedBrands });
-        if (selectedBrand) {
-          const candidateFieldNames = resolveBrandFieldNames('tyre', selectedBrand);
-          let brandPrice = null;
-          let priceNum = NaN;
-          for (const fieldName of candidateFieldNames) {
-            const candidate = refMatch[fieldName];
-            const candidateNum = Number(candidate);
-            if (candidate && !isNaN(candidateNum) && candidateNum > 0) {
-              brandPrice = candidate;
-              priceNum = candidateNum;
-              break;
-            }
+        if (selectedBrand && refMatch) {
+          let price = null;
+          for (const fieldName of resolveBrandFieldNames('tyre', selectedBrand)) {
+            price = numericPrice(refMatch[fieldName]);
+            if (price !== null) break;
           }
-          console.log('Resolved brand price:', { candidateFieldNames, brandPrice, priceNum });
-          if (brandPrice && !isNaN(priceNum) && priceNum > 0) {
-            servicePrice = priceNum;
+          if (price !== null) {
+            servicePrice = price;
           } else {
-            console.log('Invalid brand price, falling back to service.price', service.price);
             unavailableBrandServices.push({ serviceId: service._id.toString(), serviceName: service.name, brand: selectedBrand });
           }
-        } else {
-          console.log('No brand selected, falling back to service.price', service.price);
+        } else if (selectedBrand && !refMatch) {
+          servicePrice = needsQuote(service, 'no_catalogue_match');
         }
       }
 
       total += (servicePrice * qty);
     });
 
-    return { total, refMatch, services, unavailableBrandServices };
+    // catalogRow: best row even when not confident — used only for the flat
+    // pickup & drop fee, which doesn't depend on the trim.
+    return { total, refMatch, catalogRow: match.row || null, services, unavailableBrandServices, quoteServices };
   } catch (err) {
     console.error('Error in calculateServicesTotal:', err);
     // Fallback to basic calculation
@@ -456,7 +380,7 @@ export const calculateServicesTotal = async (serviceIds, vehicleId, selectedBran
       const qty = Number(normalizedQuantities[s._id.toString()] || normalizedQuantities[s._id] || 1);
       return acc + (s.price * qty);
     }, 0);
-    return { total, refMatch: null, services };
+    return { total, refMatch: null, services, unavailableBrandServices: [], quoteServices: [] };
   }
 };
 
@@ -808,7 +732,9 @@ export const createBooking = async (req, res) => {
 
     const Service = (await import('../models/Service.js')).default;
     const Vehicle = (await import('../models/Vehicle.js')).default;
-    const { total: servicesTotal, refMatch, services, unavailableBrandServices } = await calculateServicesTotal(serviceIds, vehicleId, selectedBrands, serviceQuantities);
+    const { total: servicesTotal, catalogRow, services, unavailableBrandServices, quoteServices = [] } = await calculateServicesTotal(serviceIds, vehicleId, selectedBrands, serviceQuantities);
+    const quotedIds = new Set(quoteServices.map((q) => q.serviceId));
+    const quoteServicesForBooking = quoteServices.map((q) => ({ service: q.serviceId, name: q.serviceName, reason: q.reason }));
 
     if (!services || services.length === 0) {
       return res.status(400).json({ message: 'At least one valid service is required to create a booking' });
@@ -845,8 +771,8 @@ export const createBooking = async (req, res) => {
     // If general service, add pickup_drop_price from reference data
     if (isGeneralService) {
       try {
-        if (refMatch && refMatch.pickup_drop_price) {
-          const extra = Number(refMatch.pickup_drop_price);
+        if (catalogRow && catalogRow.pickup_drop_price) {
+          const extra = Number(catalogRow.pickup_drop_price);
           if (!isNaN(extra)) {
             pickupDropPrice = extra;
             totalAmount += extra;
@@ -858,13 +784,16 @@ export const createBooking = async (req, res) => {
     }
 
     // Check if this is a service that requires payment (Car Wash, Battery/Tires, or Essentials)
-    const requiresPaymentService = services.some(service => 
+    // Items Carzzi still has to quote aren't paid upfront; if nothing payable
+    // is left the booking goes through the normal (pay-later) flow.
+    const requiresPaymentService = servicesTotal > 0 && services.some(service => 
+      !quotedIds.has(service._id.toString()) && (
       service.category === 'Car Wash' || 
       service.category === 'Wash' ||
       service.category === 'Battery' ||
       service.category === 'Tyres' ||
       service.category === 'Tyre & Battery' ||
-      service.category === 'Essentials'
+      service.category === 'Essentials')
     );
 
     // For services requiring payment, store booking data temporarily and require payment first
@@ -881,6 +810,7 @@ export const createBooking = async (req, res) => {
         pickupDropPrice,
         selectedBrands,
         serviceQuantities,
+        quoteServices: quoteServicesForBooking,
         requiresPaymentService: true
       };
 
@@ -926,6 +856,7 @@ export const createBooking = async (req, res) => {
           coupon: null,
           selectedBrands,
           serviceQuantities,
+          quoteServices: quoteServicesForBooking,
           // Mark as battery/tire service if applicable
           ...(isBatteryTireService && {
             batteryTire: {

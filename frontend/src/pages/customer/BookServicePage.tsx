@@ -296,61 +296,46 @@ const BookServicePage: React.FC = () => {
     return isBlankOrNaPrice(getBrandRaw(brand, isBattery));
   };
 
-  /** Message from Vehicle Reference when this service's price cell is text, not a number. */
-  const getServicePriceNote = (service: Service): string | null => {
-    if (!selectedVehicleReference) return null;
-
-    const isWash = service.category === 'Car Wash' || service.category === 'Wash' || service.category === 'Detailing';
-    const isBattery =
-      service.category === 'Battery' ||
-      service.vehiclePricingColumn === 'battery_brand' ||
-      service.name.toLowerCase().includes('battery');
-    const isTire =
-      !isBattery &&
-      (service.category === 'Tyres' ||
-        service.category === 'Tyre & Battery' ||
-        service.vehiclePricingColumn === 'tyre_brand' ||
-        service.name.toLowerCase().includes('tyre'));
-    const isGeneral =
-      service.category === 'Periodic' ||
-      service.category === 'Services' ||
-      service.name.toLowerCase().includes('general service');
-
-    const column = service.vehiclePricingColumn;
-    if (column && column !== 'tyre_brand' && column !== 'battery_brand') {
-      return asVehiclePriceNote(selectedVehicleReference[column as string]);
-    }
-
-    if (isGeneral) {
-      return asVehiclePriceNote(selectedVehicleReference.general_service_price);
-    }
-
-    if (isWash) {
-      const sName = service.name.toLowerCase();
-      let raw: unknown = null;
-      if (sName.includes('exterior wash') && !sName.includes('interior')) {
-        raw = selectedVehicleReference.car_wash_exterior_price;
-      } else if (sName.includes('interior + exterior') && !sName.includes('underbody')) {
-        raw = selectedVehicleReference.car_wash_interior_exterior_price;
-      } else if (
-        sName.includes('underbody wash') ||
-        (sName.includes('interior') && sName.includes('exterior') && sName.includes('underbody'))
-      ) {
-        raw = selectedVehicleReference.car_wash_interior_exterior_underbody_price;
-      }
-      if (raw === null || raw === undefined || String(raw).trim() === '') {
-        raw = selectedVehicleReference.car_wash_price;
-      }
-      return asVehiclePriceNote(raw);
-    }
-
-    // Tyre/battery prices are per-brand; checked when a brand is chosen.
-    if (isTire || isBattery) return null;
-
-    return null;
+  const numericOrNull = (raw: unknown): number | null => {
+    if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+    const n = Number(String(raw).replace(/[₹,\s]/g, ''));
+    return Number.isFinite(n) && n > 0 ? n : null;
   };
 
+  /**
+   * Vehicle-priced item with no catalogue price for this car (blank / NA /
+   * PENDING / "Contact Carzzi" / no catalogue match / battery): it can still
+   * be booked; Carzzi confirms the amount. Mirrors calculateServicesTotal.
+   */
+  const isQuoteService = (service: Service): boolean => {
+    const ref = selectedVehicleReference;
+    const name = service.name.toLowerCase();
+    const isWash = service.category === 'Car Wash' || service.category === 'Wash' || service.category === 'Detailing';
+    const isBattery = service.category === 'Battery' || service.vehiclePricingColumn === 'battery_brand' || name.includes('battery');
+    const isTire = !isBattery && (service.category === 'Tyres' || service.category === 'Tyre & Battery' || service.vehiclePricingColumn === 'tyre_brand' || name.includes('tyre'));
+    const isGeneral = service.category === 'Periodic' || service.category === 'Services' || name.includes('general service');
+    const column = service.vehiclePricingColumn;
+    if (column && column !== 'tyre_brand' && column !== 'battery_brand') return !ref || numericOrNull(ref[column as string]) === null;
+    if (isGeneral) return !ref || numericOrNull(ref.general_service_price) === null;
+    if (isBattery) {
+      const brand = selectedTireBrands[service._id];
+      return !brand || getBrandPrice(brand, true) === null;
+    }
+    if (isTire) return false;
+    if (isWash) {
+      if (!ref) return true;
+      let raw: unknown = null;
+      if (name.includes('exterior wash') && !name.includes('interior')) raw = ref.car_wash_exterior_price;
+      else if (name.includes('interior + exterior') && !name.includes('underbody')) raw = ref.car_wash_interior_exterior_price;
+      else if (name.includes('full wash') || name.includes('underbody')) raw = ref.car_wash_interior_exterior_underbody_price;
+      return numericOrNull(raw) === null && numericOrNull(ref.car_wash_price) === null;
+    }
+    return false;
+  };
+  const QUOTE_LABEL = 'Price confirmed by Carzzi';
+
   const getPackagePrice = (service: Service) => {
+    if (isQuoteService(service)) return 0;
     const isWash = service.category === 'Car Wash' || service.category === 'Wash';
     const isBattery =
       service.category === 'Battery' ||
@@ -662,7 +647,8 @@ const BookServicePage: React.FC = () => {
               selectedVehicleData.make,
               selectedVehicleData.model,
               selectedVehicleData.variant,
-              selectedVehicleData.fuelType
+              selectedVehicleData.fuelType,
+              selectedVehicleData.year
             );
             if (details) {
               if (!vehicleTireSize) {
@@ -687,7 +673,8 @@ const BookServicePage: React.FC = () => {
                 selectedVehicleData.make,
                 selectedVehicleData.model,
                 '',
-                selectedVehicleData.fuelType
+                selectedVehicleData.fuelType,
+                selectedVehicleData.year
               );
               if (details) {
                 if (!vehicleTireSize) {
@@ -742,10 +729,8 @@ const BookServicePage: React.FC = () => {
     const service = services.find(s => s._id === serviceId);
 
     if (isSelecting && service) {
-      const priceNote = getServicePriceNote(service);
-      if (priceNote) {
-        toast.info(priceNote);
-        return;
+      if (isQuoteService(service)) {
+        toast.info(`${service.name}: the price for your car will be confirmed by Carzzi. You can still book now.`);
       }
     }
 
@@ -770,7 +755,8 @@ const BookServicePage: React.FC = () => {
               selectedVehicleData.make,
               selectedVehicleData.model,
               selectedVehicleData.variant,
-              selectedVehicleData.fuelType
+              selectedVehicleData.fuelType,
+              selectedVehicleData.year
             );
             if (details) {
               vehicleTireSize = details.front_tyres || details.rear_tyres;
@@ -1411,6 +1397,9 @@ const BookServicePage: React.FC = () => {
 
                               if (!showForFlow && !showForService) return null;
 
+                              if (selectedVehicleData && isQuoteService(service)) {
+                                return <p className="mt-1 text-sm font-medium text-muted-foreground">{QUOTE_LABEL}</p>;
+                              }
                               const unit = getPackagePrice(service);
                               const qty = serviceQuantities[service._id] || 1;
                               const total = unit * qty;
@@ -1583,9 +1572,22 @@ const BookServicePage: React.FC = () => {
 
                               {/* Brand Selection — Tyres or Battery, whichever this service is */}
                               <div className="space-y-3 pt-4 border-t border-border/50">
-                                <label className="text-sm font-bold text-foreground uppercase tracking-wider block">Select Brand</label>
+                                {isBatteryLike ? (
+                                  // Catalogue has no battery prices: Carzzi confirms fitment and quotes.
+                                  <div className="rounded-xl bg-muted/50 p-3 text-sm">
+                                    <p className="font-semibold text-foreground">{QUOTE_LABEL}</p>
+                                    <p className="text-muted-foreground mt-0.5">
+                                      {selectedVehicleReference?.battery_details
+                                        ? `Battery for your car: ${selectedVehicleReference.battery_details}. `
+                                        : ''}
+                                      Carzzi checks the fitment and confirms the price before replacing it.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <label className="text-sm font-bold text-foreground uppercase tracking-wider block">Select Brand</label>
+                                )}
                                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 items-start">
-                                  {[...(isBatteryLike ? batteryBrandOptions : tireBrandOptions)]
+                                  {[...(isBatteryLike ? [] : tireBrandOptions)]
                                     // Available first (priced or note-text). NA/blank last.
                                     .sort((a, b) => {
                                       const aUnavailable = isBrandNaUnavailable(a, isBatteryLike);
@@ -1929,9 +1931,13 @@ const BookServicePage: React.FC = () => {
                               )}
                             </div>
                           </div>
-                          <p className="text-lg font-bold text-primary">
-                            ₹{getPackagePrice(service) * qty}
-                          </p>
+                          {isQuoteService(service) ? (
+                            <p className="text-sm font-medium text-muted-foreground text-right max-w-[9rem]">{QUOTE_LABEL}</p>
+                          ) : (
+                            <p className="text-lg font-bold text-primary tabular-nums">
+                              ₹{getPackagePrice(service) * qty}
+                            </p>
+                          )}
                         </div>
                       );
                     })}

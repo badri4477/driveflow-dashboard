@@ -219,18 +219,21 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
         final isPaid = result['success'] == true && paymentStatus == 'paid';
 
         if (isPaid) {
-          Navigator.of(context).pushNamed(
-            '/payment-status',
-            arguments: PaymentStatusPage(
-              success: true,
-              title: 'Payment successful',
-              message: 'Your booking payment has been completed successfully.',
-              primaryButtonLabel: 'View booking',
-              popOnPrimary: true,
-            ),
-          ).then((_) {
-            if (mounted) _load(silent: true);
-          });
+          Navigator.of(context)
+              .pushNamed(
+                '/payment-status',
+                arguments: PaymentStatusPage(
+                  success: true,
+                  title: 'Payment successful',
+                  message:
+                      'Your booking payment has been completed successfully.',
+                  primaryButtonLabel: 'View booking',
+                  popOnPrimary: true,
+                ),
+              )
+              .then((_) {
+                if (mounted) _load(silent: true);
+              });
         } else if (_isFailurePaymentStatus(paymentStatus)) {
           final statusMsg = paymentStatus == 'user_dropped'
               ? 'Payment was cancelled.'
@@ -767,6 +770,7 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
             model: vehicle.model,
             variant: vehicle.variant,
             fuelType: vehicle.fuelType,
+            year: vehicle.year > 0 ? vehicle.year : null,
           );
           if (mounted) {
             setState(() => _vehicleRef = ref);
@@ -1776,14 +1780,15 @@ class _TrackBookingPageState extends State<TrackBookingPage> {
                     // and the admin price, shown so the bill adds up.
                     double overrideAdjustment = 0;
                     if (booking.totalPriceOverrideAmount != null) {
-                      final lineSum = servicesTotal +
+                      final lineSum =
+                          servicesTotal +
                           parts +
                           labour +
                           merchantGst +
                           (isGeneralService ? pickup : 0);
                       overrideAdjustment =
                           ((finalTotal + discount - lineSum) * 100).round() /
-                              100;
+                          100;
                     }
                     final isDeliveredStatus =
                         booking.status.toUpperCase() == 'DELIVERED';

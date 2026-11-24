@@ -242,6 +242,7 @@ const TrackServicePage: React.FC = () => {
         vehicle.model,
         vehicle.variant,
         vehicle.fuelType,
+        vehicle.year,
       );
       setVehicleRef(ref ?? null);
     } catch {
@@ -1320,7 +1321,14 @@ const TrackServicePage: React.FC = () => {
                 <CreditCard className="w-5 h-5 text-primary shrink-0" />
                 Payment Details
               </h2>
-              
+
+              {Array.isArray(order.quoteServices) && order.quoteServices.length > 0 && (
+                <p className="mb-4 rounded-xl bg-muted/60 p-3 text-sm text-foreground">
+                  <span className="font-semibold">Price confirmed by Carzzi: </span>
+                  {order.quoteServices.map((q) => q.name).filter(Boolean).join(', ')}. We'll share the amount before the work starts.
+                </p>
+              )}
+
               <div className="space-y-3 mb-6">
                 {order.billing?.invoiceNumber && (
                   <div className="flex items-baseline justify-between pb-3 mb-1 border-b border-border">

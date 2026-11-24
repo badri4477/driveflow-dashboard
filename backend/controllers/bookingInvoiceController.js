@@ -5,6 +5,7 @@ import Service from '../models/Service.js';
 import Vehicle from '../models/Vehicle.js';
 import Setting from '../models/Setting.js';
 import { getVehicleDataFromS3 } from '../utils/s3Storage.js';
+import { findCatalogMatchForVehicle } from '../utils/vehicleCatalog.js';
 import path from 'path';
 import fs from 'fs';
 import { PassThrough } from 'stream';
@@ -591,15 +592,9 @@ export const getBookingInvoice = async (req, res) => {
           setTimeout(() => reject(new Error('S3 fetch timed out')), 2500)
         );
         const allRefData = await Promise.race([s3Promise, timeoutPromise]);
-        const cleanBrand = v.make.trim().toLowerCase();
-        const cleanModel = v.model.trim().toLowerCase();
-        const cleanVariant = v.variant ? v.variant.trim().toLowerCase() : '';
-
-        refMatch = allRefData.find(item => 
-          item.brand_name.toLowerCase() === cleanBrand && 
-          item.model.toLowerCase() === cleanModel && 
-          (cleanVariant === '' || item.brand_model.toLowerCase() === cleanVariant)
-        );
+        // Same catalogue rules as booking pricing (calculateServicesTotal).
+        const m = findCatalogMatchForVehicle(allRefData, v);
+        refMatch = m.confident ? m.row : null;
       }
     } catch (err) {
       console.error('Error fetching reference data for invoice:', err);
@@ -677,7 +672,8 @@ export const getBookingInvoice = async (req, res) => {
         const selectedBrand = booking.selectedBrands?.[serviceIdStr] || booking.selectedBrands?.[service._id];
         if (selectedBrand) {
           desc = `${desc} (${selectedBrand})`;
-          const brandKey = `tyre_price_${selectedBrand.toLowerCase().replace(/\s+/g, '')}`;
+          // Catalogue tyre fields are alphanumeric slugs ("Yokohama Earth-1 Max" → yokohamaearth1max).
+          const brandKey = `tyre_price_${selectedBrand.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
           const brandPrice = refMatch[brandKey];
           const priceNum = Number(brandPrice);
           if (brandPrice && !isNaN(priceNum) && priceNum > 0) {
@@ -695,6 +691,13 @@ export const getBookingInvoice = async (req, res) => {
             price = priceNum;
           }
         }
+      }
+
+      // Booked without a catalogue price: Carzzi confirms the amount.
+      const quoted = (booking.quoteServices || []).some((q) => String(q.service?._id || q.service) === serviceIdStr);
+      if (quoted) {
+        desc = `${desc} (price to be confirmed by Carzzi)`;
+        price = 0;
       }
 
       serviceRows.push({ desc, qty, price });

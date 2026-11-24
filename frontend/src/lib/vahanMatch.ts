@@ -29,7 +29,12 @@ export function matchModel(vahanModel: string, models: string[]): string {
   return hits[0] || '';
 }
 
-const FUEL_ALIASES: Record<string, string[]> = { Electric: ['EV', 'Electric'], EV: ['EV', 'Electric'] };
+const FUEL_ALIASES: Record<string, string[]> = {
+  Electric: ['EV', 'Electric'],
+  EV: ['EV', 'Electric'],
+  Hybrid: ['Hybrid', 'Strong Hybrid'],
+  CNG: ['CNG'],
+};
 export function matchFuel(f: string, options: string[]): string | undefined {
   if (!f) return undefined;
   const cands = FUEL_ALIASES[f] || [f];
@@ -40,8 +45,16 @@ export interface VahanFill { licensePlate?: string; make?: string; model?: strin
 
 // Engine/emission words that say nothing about the trim level.
 const NOISE = new Set(['BSIV', 'BSVI', 'BS4', 'BS6', 'BSIII', 'BS3', 'BHARAT', 'STAGE', 'AT', 'MT', 'AMT']);
+// "HTK+" (catalogue) and "HTK PLUS" (Vahan) are the same trim — keep the
+// plus as its own token so HTK+ never collapses into plain HTK (PDF rule).
 const words = (s: string) =>
-  s.toUpperCase().replace(/[()]/g, ' ').split(/[^A-Z0-9]+/).filter((w) => w.length >= 2 && !NOISE.has(w));
+  s
+    .toUpperCase()
+    .replace(/\s*\+/g, 'PLUS')
+    .replace(/\s+PLUS\b/g, 'PLUS')
+    .replace(/[()]/g, ' ')
+    .split(/[^A-Z0-9]+/)
+    .filter((w) => w.length >= 2 && !NOISE.has(w));
 
 /** Vahan gives model + trim in one string (e.g. "I20 ASTA-CRDI BSIV"). Pick the catalog variant
  *  (brand_model, e.g. "Elite i20 2018 Asta(O)") sharing the most trim words, preferring rows with the
@@ -63,7 +76,13 @@ export function matchVariant(vahanModel: string, model: string, rows: CatalogRow
     }
     if (score === 0) continue;
     if (fuel && (r.fuel_type || '').toLowerCase() === fuel.toLowerCase()) score += 3;
-    if (year) {
+    const from = Number(r.year_from);
+    if (year && Number.isFinite(from) && from > 0) {
+      // Catalogue rows carry a year range ("2016–2020", "2021 onwards"): the
+      // manufacturing year must fall inside it (PDF lookup rule).
+      const to = r.year_to === null || r.year_to === undefined || r.year_to === '' ? Infinity : Number(r.year_to);
+      score += year >= from && year <= to ? 4 : -4;
+    } else if (year) {
       const ys = v.match(/(19|20)\d{2}/g)?.map(Number) || [];
       // Catalog variants are "<generation year> [ Trim ]": a 2015 car is the 2012 generation, not 2008 or 2020.
       const gen = Math.max(-1, ...ys.filter((y) => y <= year));

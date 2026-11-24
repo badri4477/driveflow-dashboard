@@ -58,6 +58,7 @@ const BookingDetailPage: React.FC = () => {
         vehicle.model,
         vehicle.variant,
         vehicle.fuelType,
+        vehicle.year,
       );
       setVehicleRef(ref ?? null);
     } catch {
@@ -802,6 +803,12 @@ const BookingDetailPage: React.FC = () => {
              <h3 className="font-semibold flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-primary" /> Payment Info
              </h3>
+             {Array.isArray(booking.quoteServices) && booking.quoteServices.length > 0 && (
+               <p className="rounded-xl bg-amber-500/10 p-3 text-sm text-foreground">
+                 <span className="font-semibold">Needs a Carzzi quote (booked at ₹0): </span>
+                 {booking.quoteServices.map((q) => q.name).filter(Boolean).join(', ')}. No catalogue price for this vehicle.
+               </p>
+             )}
              <div className="space-y-2 text-sm">
                 {isGeneralService && (
                    <div className="flex justify-between">

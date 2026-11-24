@@ -123,7 +123,7 @@ export async function resolvePaymentAmount({ bookingId, userId, tempBookingData 
     throw new Error('Invalid temp booking data: vehicle and services are required');
   }
 
-  const { total: servicesTotal, refMatch, services } = await calculateServicesTotal(
+  const { total: servicesTotal, catalogRow, services, quoteServices = [] } = await calculateServicesTotal(
     serviceIds,
     vehicleId,
     tempBookingData.selectedBrands || {},
@@ -140,8 +140,8 @@ export async function resolvePaymentAmount({ bookingId, userId, tempBookingData 
       (service.name && service.name.toLowerCase().includes('general service'))
   );
 
-  if (isGeneralService && refMatch?.pickup_drop_price) {
-    const extra = Number(refMatch.pickup_drop_price);
+  if (isGeneralService && catalogRow?.pickup_drop_price) {
+    const extra = Number(catalogRow.pickup_drop_price);
     if (!isNaN(extra)) {
       pickupDropPrice = extra;
       totalAmount += extra;
@@ -183,6 +183,7 @@ export async function resolvePaymentAmount({ bookingId, userId, tempBookingData 
     coupon: couponId,
     selectedBrands: tempBookingData.selectedBrands || {},
     serviceQuantities: tempBookingData.serviceQuantities || {},
+    quoteServices: quoteServices.map((q) => ({ service: q.serviceId, name: q.serviceName, reason: q.reason })),
     requiresPaymentService: true,
     isCarWashService: services.some(
       (s) => s.category === 'Car Wash' || s.category === 'Wash'

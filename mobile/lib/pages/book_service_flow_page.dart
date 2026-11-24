@@ -98,6 +98,8 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
   final Map<String, String> _selectedTireBrands = {};
   final Map<String, int> _serviceQuantities = {};
   Map<String, dynamic>? _selectedVehicleReference;
+  // True once a lookup ran and the catalogue had no row for this vehicle.
+  bool _referenceMissing = false;
   // Admin-added tyre/battery brand columns from Vehicle Reference Data,
   // and any built-in brands an admin has hidden there — combined with
   // commonTireBrands/commonBatteryBrands below into the brand chips shown.
@@ -106,6 +108,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
   List<String> _dynamicBatteryBrands = const [];
   Set<String> _hiddenBuiltinTireBrands = const {};
   Set<String> _hiddenBuiltinBatteryBrands = const {};
+
   /// Display label → Vehicle Data fieldName (handles renamed columns).
   Map<String, String> _tireBrandFields = const {
     'Bridgestone': 'tyre_price_bridgestone',
@@ -122,8 +125,10 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
   final Map<String, bool> _isManualSize = {};
   final Map<String, TextEditingController> _tireSizeControllers = {};
   final Map<String, FocusNode> _tireSizeFocusNodes = {};
+
   /// When true, also show brands that have no price for this vehicle.
   final Set<String> _showUnavailableBrands = {};
+
   /// Earliest bookable day is tomorrow (same-day booking not allowed).
   DateTime _selectedDate = _earliestBookableDate();
   String? _selectedTimeSlot;
@@ -595,9 +600,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
   /// order preserved), so a customer isn't scrolling past a wall of
   /// disabled brands to find one they can actually pick.
   List<String> _sortedBrandOptions(bool isBatteryService) {
-    final options = isBatteryService
-        ? _batteryBrandOptions
-        : _tireBrandOptions;
+    final options = isBatteryService ? _batteryBrandOptions : _tireBrandOptions;
     final available = <String>[];
     final unavailable = <String>[];
     for (final brand in options) {
@@ -615,8 +618,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
       _vehicleService.getBuiltinColumns('battery'),
     ]);
     if (!mounted) return;
-    final dynamicTire =
-        results[0] as List<({String label, String fieldName})>;
+    final dynamicTire = results[0] as List<({String label, String fieldName})>;
     final dynamicBattery =
         results[1] as List<({String label, String fieldName})>;
     final builtinTire =
@@ -726,71 +728,6 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
     return _isBlankOrNaPrice(_brandRaw(isBattery, brand));
   }
 
-  /// Non-numeric Vehicle Data cell for this service's price column, if any.
-  String? _servicePriceNote(ServiceItem service) {
-    final ref = _selectedVehicleReference;
-    if (ref == null) return null;
-
-    String? asNote(dynamic raw) {
-      if (raw == null || _isBlankOrNaPrice(raw)) return null;
-      final trimmed = raw.toString().trim();
-      final price = double.tryParse(trimmed);
-      if (price != null && price > 0) return null;
-      return trimmed;
-    }
-
-    final cat = (service.category ?? '').toLowerCase();
-    final nameLower = service.name.toLowerCase();
-    final isBattery =
-        cat.contains('battery') || service.vehiclePricingColumn == 'battery_brand';
-    final isTire =
-        cat.contains('tyre') ||
-        cat.contains('tire') ||
-        service.vehiclePricingColumn == 'tyre_brand';
-    final isGeneral =
-        cat == 'periodic' ||
-        cat == 'services' ||
-        nameLower.contains('general service');
-    final isWash =
-        cat == 'car wash' || cat == 'wash' || cat == 'detailing';
-
-    final column = service.vehiclePricingColumn;
-    if (column != null &&
-        column != 'tyre_brand' &&
-        column != 'battery_brand') {
-      return asNote(ref[column]);
-    }
-
-    if (isGeneral) {
-      return asNote(ref['general_service_price']);
-    }
-
-    if (isWash) {
-      dynamic raw;
-      if ((nameLower.contains('exterior wash') ||
-              nameLower.contains('exterior only')) &&
-          !nameLower.contains('interior')) {
-        raw = ref['car_wash_exterior_price'];
-      } else if (nameLower.contains('interior + exterior') &&
-          !nameLower.contains('underbody')) {
-        raw = ref['car_wash_interior_exterior_price'];
-      } else if (nameLower.contains('underbody wash') ||
-          (nameLower.contains('interior') &&
-              nameLower.contains('exterior') &&
-              nameLower.contains('underbody'))) {
-        raw = ref['car_wash_interior_exterior_underbody_price'];
-      }
-      final rawStr = raw?.toString().trim() ?? '';
-      if (rawStr.isEmpty) {
-        raw = ref['car_wash_price'];
-      }
-      return asNote(raw);
-    }
-
-    if (isTire || isBattery) return null;
-    return null;
-  }
-
   /// Price for the given brand on the currently selected vehicle, or null
   /// when there's no vehicle reference match (nothing to show — the brand
   /// itself isn't necessarily unavailable, we just don't have vehicle-
@@ -803,14 +740,52 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
     return (price != null && price > 0) ? price : null;
   }
 
+  static const _quoteLabel = 'Price confirmed by Carzzi';
+
+  bool _isBatteryLine(ServiceItem service) {
+    final cat = (service.category ?? '').toLowerCase();
+    return service.vehiclePricingColumn == 'battery_brand' ||
+        cat == 'battery' ||
+        service.name.toLowerCase().contains('battery');
+  }
+
+  /// Vehicle-priced item with no catalogue price for this car (blank / NA /
+  /// PENDING / "Contact Carzzi" / no catalogue match / battery): it can still
+  /// be booked at ₹0 and Carzzi confirms the amount. Mirrors the backend
+  /// calculateServicesTotal and web BookServicePage.isQuoteService.
+  bool _isQuoteService(ServiceItem service) {
+    if (_selectedVehicleId == null) return false;
+    if (_isBatteryLine(service)) {
+      final brand = _selectedTireBrands[service.id];
+      return brand == null || _getBrandPrice(true, brand) == null;
+    }
+    final cat = (service.category ?? '').toLowerCase();
+    final column = service.vehiclePricingColumn;
+    final vehiclePriced =
+        (column != null &&
+            column != 'tyre_brand' &&
+            column != 'battery_brand') ||
+        cat == 'periodic' ||
+        cat == 'services' ||
+        service.name.toLowerCase().contains('general service') ||
+        cat == 'car wash' ||
+        cat == 'wash' ||
+        cat == 'detailing';
+    if (!vehiclePriced) return false;
+    if (_referenceMissing) return true;
+    return _hasMissingVehiclePrice(service);
+  }
+
   double _getServicePrice(ServiceItem service) {
+    if (_isQuoteService(service)) return 0;
     if (_adjustedPrices.containsKey(service.id)) {
       return _adjustedPrices[service.id]!;
     }
 
     final cat = service.category?.toLowerCase() ?? '';
     final isBattery =
-        cat.contains('battery') || service.vehiclePricingColumn == 'battery_brand';
+        cat.contains('battery') ||
+        service.vehiclePricingColumn == 'battery_brand';
     final isTire =
         cat.contains('tyre') ||
         cat.contains('tire') ||
@@ -919,23 +894,24 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
 
     if (flow == null) {
       final cat = (service.category ?? '').toLowerCase();
-      final isWash =
-          cat == 'car wash' || cat == 'wash' || cat == 'detailing';
+      final isWash = cat == 'car wash' || cat == 'wash' || cat == 'detailing';
       final isEssentials = cat == 'essentials';
       if (!isGeneralServiceItem(service) && !isWash && !isEssentials) {
         return const SizedBox.shrink();
       }
     }
 
-    if (_hasMissingVehiclePrice(service)) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 4),
+    if (_isQuoteService(service)) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
         child: Text(
-          'NA',
+          _quoteLabel,
           style: TextStyle(
             fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: AppColors.error,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).brightness == Brightness.dark
+                ? Colors.white70
+                : Colors.black54,
           ),
         ),
       );
@@ -968,24 +944,14 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
   /// Tapping the already-selected service deselects it.
   void _toggleServiceSelection(ServiceItem service) {
     final alreadySelected = _selectedServiceIds.contains(service.id);
-    if (!alreadySelected) {
-      final note = _servicePriceNote(service);
-      if (note != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(note)),
-        );
-        return;
-      }
-      if (_hasMissingVehiclePrice(service)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Price not available for this vehicle yet. Please check back once it has been added.',
-            ),
+    if (!alreadySelected && _isQuoteService(service)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${service.name}: the price for your car will be confirmed by Carzzi. You can still book now.',
           ),
-        );
-        return;
-      }
+        ),
+      );
     }
 
     setState(() {
@@ -1010,8 +976,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             _selectedVehicleOEMTire!.isNotEmpty) {
           _tireSizes[service.id] = _selectedVehicleOEMTire!;
           if (_tireSizeControllers.containsKey(service.id)) {
-            _tireSizeControllers[service.id]!.text =
-                _selectedVehicleOEMTire!;
+            _tireSizeControllers[service.id]!.text = _selectedVehicleOEMTire!;
           }
         }
         _autoFillTireSize(service.id, vehicle);
@@ -1104,6 +1069,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             ? vehicle.variant!.trim()
             : null,
         fuelType: vehicle.fuelType,
+        year: vehicle.year > 0 ? vehicle.year : null,
       );
       if (ref != null) {
         tireSize = (ref['front_tyres'] ?? ref['rear_tyres'])?.toString();
@@ -1184,6 +1150,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             ? vehicle.variant!.trim()
             : null,
         fuelType: vehicle.fuelType,
+        year: vehicle.year > 0 ? vehicle.year : null,
       );
 
       double pickupPrice = 0;
@@ -1214,9 +1181,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
               column != 'tyre_brand' &&
               column != 'battery_brand';
           if (isDirectPricingColumn) {
-            final columnPrice = double.tryParse(
-              ref[column]?.toString() ?? '',
-            );
+            final columnPrice = double.tryParse(ref[column]?.toString() ?? '');
             if (columnPrice != null && columnPrice > 0) {
               newAdjustedPrices[service.id] = columnPrice;
               continue;
@@ -1272,6 +1237,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
         _pickupDropPrice = pickupPrice;
         _adjustedPrices = newAdjustedPrices;
         _selectedVehicleReference = ref;
+        _referenceMissing = ref == null;
       });
 
       String? tireSize = (ref?['front_tyres'] ?? ref?['rear_tyres'])
@@ -1350,7 +1316,10 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
     );
   }
 
-  List<String> _tireSizeSuggestionsForQuery(String raw, {required bool focused}) {
+  List<String> _tireSizeSuggestionsForQuery(
+    String raw, {
+    required bool focused,
+  }) {
     if (!focused) return const [];
     final q = raw.trim().toLowerCase();
     if (q.isEmpty) return List<String>.from(_allTireSizeSuggestions);
@@ -1368,16 +1337,13 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
       service.id,
       () => TextEditingController(text: _tireSizes[service.id] ?? ''),
     );
-    final focusNode = _tireSizeFocusNodes.putIfAbsent(
-      service.id,
-      () {
-        final node = FocusNode();
-        node.addListener(() {
-          if (mounted) setState(() {});
-        });
-        return node;
-      },
-    );
+    final focusNode = _tireSizeFocusNodes.putIfAbsent(service.id, () {
+      final node = FocusNode();
+      node.addListener(() {
+        if (mounted) setState(() {});
+      });
+      return node;
+    });
     final suggestions = _tireSizeSuggestionsForQuery(
       controller.text,
       focused: focusNode.hasFocus,
@@ -1662,8 +1628,8 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
           final statusMsg = paymentStatus == 'user_dropped'
               ? 'Payment was cancelled.'
               : paymentStatus == 'failed'
-                  ? 'Payment failed. Please try again.'
-                  : 'Payment not completed (status: $paymentStatus). Please try again.';
+              ? 'Payment failed. Please try again.'
+              : 'Payment not completed (status: $paymentStatus). Please try again.';
           Navigator.of(context).pushNamed(
             '/payment-status',
             arguments: PaymentStatusPage(
@@ -1846,12 +1812,12 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
       final isAuthed = context.read<AuthProvider>().isAuthenticated;
       final List<dynamic> results = await Future.wait([
         isAuthed
-            ? _vehicleService.listMyVehicles(forceRefresh: forceRefresh).catchError((
-                e,
-              ) {
-                debugPrint('Error fetching vehicles: $e');
-                return <Vehicle>[];
-              })
+            ? _vehicleService
+                  .listMyVehicles(forceRefresh: forceRefresh)
+                  .catchError((e) {
+                    debugPrint('Error fetching vehicles: $e');
+                    return <Vehicle>[];
+                  })
             : Future<List<Vehicle>>.value(const <Vehicle>[]),
         _catalogService.listServices(forceRefresh: forceRefresh).catchError((
           e,
@@ -2528,9 +2494,8 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
                             selected: isSelected,
                             enabled: true,
                             compact: true,
-                            onTap: () => setState(
-                              () => _tireSizes[service.id] = size,
-                            ),
+                            onTap: () =>
+                                setState(() => _tireSizes[service.id] = size),
                           );
                         }).toList(),
                       ),
@@ -2539,10 +2504,30 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
               },
             ),
           ],
-          if (showBrandSelection) ...[
+          // Catalogue has no battery prices: Carzzi confirms fitment and
+          // quotes — parity with web BookServicePage.
+          if (showBrandSelection && isBatteryService) ...[
+            Text(
+              _quoteLabel,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${(_selectedVehicleReference?['battery_details'] ?? '').toString().trim().isNotEmpty ? 'Battery for your car: ${_selectedVehicleReference!['battery_details']}. ' : ''}'
+              'Carzzi checks the fitment and confirms the price before replacing it.',
+              style: TextStyle(
+                fontSize: 13,
+                color: isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+          ],
+          if (showBrandSelection && !isBatteryService) ...[
             if (showSizeSelection) ...[
               const SizedBox(height: 12),
-              Divider(height: 1, color: isDark ? Colors.white12 : Colors.black12),
+              Divider(
+                height: 1,
+                color: isDark ? Colors.white12 : Colors.black12,
+              ),
               const SizedBox(height: 10),
             ],
             const Text(
@@ -2564,8 +2549,10 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
                 childAspectRatio: 1.5,
                 children: brandsToShow.map((brand) {
                   final isSelected = _selectedTireBrands[service.id] == brand;
-                  final isNaUnavailable =
-                      _isBrandNaUnavailable(isBatteryService, brand);
+                  final isNaUnavailable = _isBrandNaUnavailable(
+                    isBatteryService,
+                    brand,
+                  );
                   final priceNote = _brandPriceNote(isBatteryService, brand);
                   final brandPrice = isSelected
                       ? _getBrandPrice(isBatteryService, brand)
@@ -2644,8 +2631,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             const SizedBox(height: 8),
             Row(
               children: [1, 2, 3, 4, 5].map((qty) {
-                final isSelected =
-                    (_serviceQuantities[service.id] ?? 1) == qty;
+                final isSelected = (_serviceQuantities[service.id] ?? 1) == qty;
                 return Expanded(
                   child: Padding(
                     padding: EdgeInsets.only(right: qty == 5 ? 0 : 8),
@@ -2654,9 +2640,8 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
                       selected: isSelected,
                       enabled: true,
                       compact: true,
-                      onTap: () => setState(
-                        () => _serviceQuantities[service.id] = qty,
-                      ),
+                      onTap: () =>
+                          setState(() => _serviceQuantities[service.id] = qty),
                     ),
                   ),
                 );
@@ -2679,7 +2664,9 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             margin: const EdgeInsets.only(bottom: 10),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.06),
+              color: isDark
+                  ? Colors.white10
+                  : Colors.black.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Row(
@@ -2786,13 +2773,15 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             cat.contains('tyre') ||
             cat.contains('tire') ||
             service.vehiclePricingColumn == 'tyre_brand';
-        if (isTire || isBattery) {
+        // Battery is quoted by Carzzi — no brand to pick.
+        if (isTire && !_isBatteryLine(service)) {
           final selectedBrand = _selectedTireBrands[service.id];
           // A brand only counts as selected once it resolves to a real
           // price — the brand grid already blocks tapping blank/NA/
           // note-only brands, but this guards against a stale selection
           // (e.g. the reference data changed after the brand was picked).
-          final hasPrice = selectedBrand != null &&
+          final hasPrice =
+              selectedBrand != null &&
               (_getBrandPrice(isBattery, selectedBrand) ?? 0) > 0;
           if (!hasPrice) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -2804,20 +2793,9 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
             );
             return;
           }
-        } else if (_hasMissingVehiclePrice(service)) {
-          // Defense in depth: the service card already blocks selecting a
-          // service with no vehicle-specific price, but a selection made
-          // before the reference data finished loading could still slip
-          // through — never let checkout proceed with one.
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Price not available for this vehicle yet. Please check back once it has been added.',
-              ),
-            ),
-          );
-          return;
         }
+        // Items without a catalogue price are booked at ₹0; the server
+        // records them and Carzzi confirms the amount.
       }
     }
     if (_currentStep == 2) {
@@ -3015,7 +2993,9 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
                 onPressed: () async {
                   if (isGuest) {
                     final ok = await ensureLoggedIn(context);
-                    if (ok && mounted) await _fetchInitialData(forceRefresh: true);
+                    if (ok && mounted) {
+                      await _fetchInitialData(forceRefresh: true);
+                    }
                     return;
                   }
                   Navigator.pushNamed(
@@ -3429,9 +3409,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
                                               : AppColors.textPrimaryLight,
                                         ),
                                       ),
-                                      if (!isGeneralServiceItem(
-                                        service,
-                                      )) ...[
+                                      if (!isGeneralServiceItem(service)) ...[
                                         const SizedBox(height: 4),
                                         Text(
                                           'Time: ${service.estimatedMinutes} mins',
@@ -3439,8 +3417,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
                                             fontSize: 12,
                                             color: isDark
                                                 ? AppColors.textSecondary
-                                                : AppColors
-                                                      .textSecondaryLight,
+                                                : AppColors.textSecondaryLight,
                                           ),
                                         ),
                                       ],
@@ -4809,7 +4786,8 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
       if (silent) {
         final p = await Geolocator.checkPermission();
         granted =
-            p == LocationPermission.always || p == LocationPermission.whileInUse;
+            p == LocationPermission.always ||
+            p == LocationPermission.whileInUse;
       } else {
         if (!mounted) return;
         granted = await LocationHelper.ensureLocationAccess(context);
@@ -4990,6 +4968,7 @@ class _BookServiceFlowPageState extends State<BookServiceFlowPage> {
       loadingDialogOpen = false;
       Navigator.of(context, rootNavigator: true).pop();
     }
+
     showDialog(
       context: context,
       barrierDismissible: false,

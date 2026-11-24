@@ -48,6 +48,9 @@ interface VehicleData {
   car_wash_interior_exterior_underbody_price?: string | number;
   general_service_price?: string | number;
   fuel_type?: string;
+  year_range?: string;
+  body_type?: string;
+  tyre_size?: string;
   // Admin-defined dynamic brand columns (e.g. tyre_price_continental) ride
   // along under this catch-all instead of being individually declared.
   [dynamicField: string]: string | number | undefined;
@@ -74,6 +77,9 @@ const AdminVehicleDataPage = () => {
     brand_name: '',
     model: '',
     brand_model: '',
+    year_range: '',
+    body_type: '',
+    tyre_size: '',
     front_tyres: '',
     rear_tyres: '',
     fuel_type: '',
@@ -172,12 +178,24 @@ const AdminVehicleDataPage = () => {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!window.confirm(
+      `Import "${file.name}"?\n\nA catalogue workbook (with Year Range) REPLACES all current vehicle data. ` +
+      'The current data is backed up first.'
+    )) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
     try {
       setUploading(true);
-      await importVehicleReference(file);
-      toast.success('Vehicle data imported successfully');
+      const result = await importVehicleReference(file);
+      toast.success(result?.message || 'Vehicle data imported successfully');
+      if (Array.isArray(result?.warnings) && result.warnings.length) {
+        toast.error(`${result.warnings.length} row(s) need attention: ${result.warnings[0]}`);
+      }
       fetchVehicleData();
+      fetchColumns();
+      fetchBuiltinColumns();
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to import data');
     } finally {
@@ -195,6 +213,11 @@ const AdminVehicleDataPage = () => {
         brand_name: vehicle.brand_name,
         model: vehicle.model,
         brand_model: vehicle.brand_model,
+        year_range: vehicle.year_range || '',
+        body_type: vehicle.body_type || '',
+        // Older rows have only front/rear sizes.
+        tyre_size: vehicle.tyre_size || (vehicle.front_tyres && vehicle.rear_tyres && vehicle.front_tyres !== vehicle.rear_tyres
+          ? `Front: ${vehicle.front_tyres} / Rear: ${vehicle.rear_tyres}` : vehicle.front_tyres || ''),
         front_tyres: vehicle.front_tyres,
         rear_tyres: vehicle.rear_tyres,
         fuel_type: vehicle.fuel_type || '',
@@ -225,6 +248,9 @@ const AdminVehicleDataPage = () => {
         brand_name: '',
         model: '',
         brand_model: '',
+        year_range: '',
+        body_type: '',
+        tyre_size: '',
         front_tyres: '',
         rear_tyres: '',
         fuel_type: '',
@@ -268,11 +294,15 @@ const AdminVehicleDataPage = () => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.brand_name.trim() || !formData.model.trim() || !formData.brand_model.trim()) {
-      toast.error('Brand, model, and brand model are required');
+      toast.error('Brand, model and variant are required');
       return;
     }
-    if (!formData.front_tyres.trim() || !formData.rear_tyres.trim()) {
-      toast.error('Front and rear tyre details are required');
+    if (!formData.tyre_size.trim()) {
+      toast.error('Tyre size is required');
+      return;
+    }
+    if (formData.year_range.trim() && !/^\d{4}\s*([-–—]\s*\d{4}|\s+onwards)$/i.test(formData.year_range.trim())) {
+      toast.error('Year range must look like 2016–2020 or 2021 onwards');
       return;
     }
     try {
@@ -282,10 +312,14 @@ const AdminVehicleDataPage = () => {
         brand_name: formData.brand_name.trim(),
         model: formData.model.trim(),
         brand_model: formData.brand_model.trim(),
-        front_tyres: formData.front_tyres.trim(),
-        rear_tyres: formData.rear_tyres.trim(),
+        year_range: formData.year_range.trim(),
+        body_type: formData.body_type.trim(),
+        tyre_size: formData.tyre_size.trim(),
         battery_details: formData.battery_details.trim(),
       };
+      // Server derives front/rear from tyre_size.
+      delete (cleaned as Record<string, unknown>).front_tyres;
+      delete (cleaned as Record<string, unknown>).rear_tyres;
       if (editingVehicle) {
         await updateVehicleReference(editingVehicle._id, cleaned);
         toast.success('Vehicle data updated successfully');
@@ -409,31 +443,25 @@ const AdminVehicleDataPage = () => {
       toast.error('No vehicle data to export');
       return;
     }
+    // Same headers as the catalogue workbook, so an export can be edited and re-imported.
     const rows = vehicleData.map((item) => {
       const row: Record<string, string | number> = {
-        brand_name: item.brand_name,
-        model: item.model,
-        brand_model: item.brand_model,
-        front_tyres: item.front_tyres,
-        rear_tyres: item.rear_tyres,
-        fuel_type: item.fuel_type ?? '',
-        battery_details: item.battery_details ?? '',
-        pickup_drop_price: item.pickup_drop_price ?? '',
-        tyre_price_bridgestone: item.tyre_price_bridgestone ?? '',
-        tyre_price_yokohama: item.tyre_price_yokohama ?? '',
-        tyre_price_apollo: item.tyre_price_apollo ?? '',
-        tyre_price_michelin: item.tyre_price_michelin ?? '',
-        tyre_price_dummy2: item.tyre_price_dummy2 ?? '',
-        tyre_price_dummy: item.tyre_price_dummy ?? '',
-        battery_price_amaron: item.battery_price_amaron ?? '',
-        battery_price_exide: item.battery_price_exide ?? '',
-        car_wash_exterior_price: item.car_wash_exterior_price ?? '',
-        car_wash_interior_exterior_price: item.car_wash_interior_exterior_price ?? '',
-        car_wash_interior_exterior_underbody_price: item.car_wash_interior_exterior_underbody_price ?? '',
-        general_service_price: item.general_service_price ?? '',
+        Brand: item.brand_name,
+        Model: item.model,
+        Variant: item.brand_model,
+        'Year Range': item.year_range ?? '',
+        'Fuel Type': item.fuel_type ?? '',
+        'Body Type': item.body_type ?? '',
+        'Tyre Size': item.tyre_size ?? item.front_tyres ?? '',
+        'Battery Details': item.battery_details ?? '',
+        'Exterior Wash': item.car_wash_exterior_price ?? '',
+        'Interior + Exterior Wash': item.car_wash_interior_exterior_price ?? '',
+        'Full Wash': item.car_wash_interior_exterior_underbody_price ?? '',
+        'General Service': item.general_service_price ?? '',
+        'Pickup & Drop': item.pickup_drop_price ?? '',
       };
-      columns.forEach((col) => {
-        row[col.fieldName] = item[col.fieldName] ?? '';
+      tyreColumns.forEach((col) => {
+        row[`Tyre - ${col.label}`] = item[col.fieldName] ?? '';
       });
       return row;
     });
@@ -441,7 +469,7 @@ const AdminVehicleDataPage = () => {
     const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Vehicle Reference Data');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'in');
     XLSX.writeFile(workbook, `vehicle_reference_data_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
@@ -468,7 +496,8 @@ const AdminVehicleDataPage = () => {
       (item) =>
         item.brand_name?.toLowerCase().includes(term) ||
         item.model?.toLowerCase().includes(term) ||
-        item.brand_model?.toLowerCase().includes(term),
+        item.brand_model?.toLowerCase().includes(term) ||
+        String(item.year_range || '').toLowerCase().includes(term),
     );
   }, [vehicleData, searchTerm]);
 
@@ -482,19 +511,6 @@ const AdminVehicleDataPage = () => {
     [vehicleData],
   );
 
-  // Renders a built-in brand column header, or nothing if the admin has
-  // hidden that column (hide/restore is managed via the Manage Columns
-  // modal). Keep in sync with renderBuiltinCell below — both key off the
-  // same builtin `key`.
-  const renderBuiltinHeader = (key: string, label: string) => {
-    if (hiddenBuiltinKeys.has(key)) return null;
-    return (
-      <th key={key} className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
-        {label}
-      </th>
-    );
-  };
-
   // Sheet rows mark a missing price either with a blank cell or the literal
   // string "NA" — both mean the same "no price" thing, so show both as
   // "NA" rather than mixing a blank-cell "-" with an explicit "NA" text.
@@ -506,16 +522,6 @@ const AdminVehicleDataPage = () => {
       return `₹${value}`;
     }
     return String(value);
-  };
-
-  const renderBuiltinCell = (key: string, fieldName: string, item: VehicleData) => {
-    if (hiddenBuiltinKeys.has(key)) return null;
-    const value = item[fieldName];
-    return (
-      <td key={fieldName} className="px-6 py-4 text-sm text-gray-600">
-        {formatPrice(value)}
-      </td>
-    );
   };
 
   if (loading && (!Array.isArray(vehicleData) || vehicleData.length === 0)) {
@@ -625,7 +631,7 @@ const AdminVehicleDataPage = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
           <input
             type="text"
-            placeholder="Search by brand, model or brand_model (max 50 characters)..."
+            placeholder="Search by brand, model, variant or year range"
             className="w-full pl-10 pr-4 py-2 text-sm md:text-base border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -655,6 +661,9 @@ const AdminVehicleDataPage = () => {
                     <p className="text-sm text-gray-700">{item.model}</p>
                     <p className="text-xs text-gray-500 uppercase tracking-wide pt-1">Variant</p>
                     <p className="text-sm text-gray-700 break-all">{item.brand_model}</p>
+                    <p className="text-sm text-gray-500 pt-1">
+                      {[item.year_range, item.fuel_type, item.body_type].filter(Boolean).join(' · ') || '-'}
+                    </p>
                   </div>
                   <div className="flex gap-1 shrink-0">
                     <button
@@ -685,31 +694,26 @@ const AdminVehicleDataPage = () => {
                 <th className="px-4 lg:px-6 py-4 font-semibold text-gray-700 text-left">Brand</th>
                 <th className="px-4 lg:px-6 py-4 font-semibold text-gray-700 text-left">Model</th>
                 <th className="px-4 lg:px-6 py-4 font-semibold text-gray-700 text-left">Variant</th>
-                <th className="px-6 py-4 font-semibold text-gray-700">Fuel Type</th>
-                <th className="px-6 py-4 font-semibold text-gray-700">Tyre Size</th>
-                {renderBuiltinHeader('bridgestone', 'Bridgestone')}
-                {renderBuiltinHeader('yokohama', 'Yokohama')}
-                {renderBuiltinHeader('apollo', 'Apollo')}
-                {renderBuiltinHeader('michelin', 'Michelin')}
-                {renderBuiltinHeader('dummy2', 'Dummy 2')}
-                {renderBuiltinHeader('dummy', 'Dummy')}
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Year Range</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Fuel Type</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Body Type</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Tyre Size</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Battery Details</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Exterior Wash</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Interior + Exterior Wash</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Full Wash</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">General Service</th>
+                <th className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">Pickup &amp; Drop</th>
                 {tyreColumns.map((col) => (
                   <th key={col.fieldName} className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
                     {col.label}
                   </th>
                 ))}
-                {renderBuiltinHeader('amaron', 'Amaron')}
-                {renderBuiltinHeader('exide', 'Exide')}
                 {batteryColumns.map((col) => (
                   <th key={col.fieldName} className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
                     {col.label}
                   </th>
                 ))}
-                <th className="px-6 py-4 font-semibold text-gray-700">Wash (Ext)</th>
-                <th className="px-6 py-4 font-semibold text-gray-700">Wash (Int+Ext)</th>
-                <th className="px-6 py-4 font-semibold text-gray-700">Wash (Full)</th>
-                <th className="px-6 py-4 font-semibold text-gray-700">General Svc</th>
-                <th className="px-6 py-4 font-semibold text-gray-700">P/D Price</th>
                 <th className="px-6 py-4 font-semibold text-gray-700 text-right">Actions</th>
               </tr>
             </thead>
@@ -725,50 +729,26 @@ const AdminVehicleDataPage = () => {
                   <td className="px-4 lg:px-6 py-4 text-sm text-gray-600 text-left break-words max-w-[220px]">
                     {item.brand_model}
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {item.fuel_type || '-'}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600 font-mono">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-gray-400 uppercase">Front:</span>
-                      <span>{item.front_tyres}</span>
-                      <span className="text-[10px] text-gray-400 uppercase">Rear:</span>
-                      <span>{item.rear_tyres}</span>
-                    </div>
-                  </td>
-                  {renderBuiltinCell('bridgestone', 'tyre_price_bridgestone', item)}
-                  {renderBuiltinCell('yokohama', 'tyre_price_yokohama', item)}
-                  {renderBuiltinCell('apollo', 'tyre_price_apollo', item)}
-                  {renderBuiltinCell('michelin', 'tyre_price_michelin', item)}
-                  {renderBuiltinCell('dummy2', 'tyre_price_dummy2', item)}
-                  {renderBuiltinCell('dummy', 'tyre_price_dummy', item)}
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">{item.year_range || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">{item.fuel_type || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">{item.body_type || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums min-w-[140px]">{item.tyre_size || (item.front_tyres === item.rear_tyres ? item.front_tyres : `Front: ${item.front_tyres} / Rear: ${item.rear_tyres}`) || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">{item.battery_details || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">{formatPrice(item.car_wash_exterior_price)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">{formatPrice(item.car_wash_interior_exterior_price)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">{formatPrice(item.car_wash_interior_exterior_underbody_price)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">{formatPrice(item.general_service_price)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">{formatPrice(item.pickup_drop_price)}</td>
                   {tyreColumns.map((col) => (
-                    <td key={col.fieldName} className="px-6 py-4 text-sm text-gray-600">
+                    <td key={col.fieldName} className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">
                       {formatPrice(item[col.fieldName])}
                     </td>
                   ))}
-                  {renderBuiltinCell('amaron', 'battery_price_amaron', item)}
-                  {renderBuiltinCell('exide', 'battery_price_exide', item)}
                   {batteryColumns.map((col) => (
-                    <td key={col.fieldName} className="px-6 py-4 text-sm text-gray-600">
+                    <td key={col.fieldName} className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap tabular-nums">
                       {formatPrice(item[col.fieldName])}
                     </td>
                   ))}
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {formatPrice(item.car_wash_exterior_price)}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {formatPrice(item.car_wash_interior_exterior_price)}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {formatPrice(item.car_wash_interior_exterior_underbody_price)}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {formatPrice(item.general_service_price)}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {formatPrice(item.pickup_drop_price)}
-                  </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-2">
                       <button
@@ -831,36 +811,44 @@ const AdminVehicleDataPage = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="brand_model">Brand Model (Unique Identifier)</Label>
+              <Label htmlFor="brand_model">Variant</Label>
               <Input
                 id="brand_model"
                 value={formData.brand_model}
                 onChange={(e) => setFormData({ ...formData, brand_model: e.target.value })}
-                placeholder="e.g. 320d Luxury Edition"
+                placeholder="e.g. 520d Sport Line"
                 required
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="front_tyres">Front Tyres</Label>
+                <Label htmlFor="year_range">Year Range</Label>
                 <Input
-                  id="front_tyres"
-                  value={formData.front_tyres}
-                  onChange={(e) => setFormData({ ...formData, front_tyres: e.target.value })}
-                  placeholder="e.g. 225 / 50 R17"
-                  required
+                  id="year_range"
+                  value={formData.year_range}
+                  onChange={(e) => setFormData({ ...formData, year_range: e.target.value })}
+                  placeholder="e.g. 2016–2020 or 2021 onwards"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="rear_tyres">Rear Tyres</Label>
+                <Label htmlFor="body_type">Body Type</Label>
                 <Input
-                  id="rear_tyres"
-                  value={formData.rear_tyres}
-                  onChange={(e) => setFormData({ ...formData, rear_tyres: e.target.value })}
-                  placeholder="e.g. 225 / 50 R17"
-                  required
+                  id="body_type"
+                  value={formData.body_type}
+                  onChange={(e) => setFormData({ ...formData, body_type: e.target.value })}
+                  placeholder="e.g. SUV"
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tyre_size">Tyre Size</Label>
+              <Input
+                id="tyre_size"
+                value={formData.tyre_size}
+                onChange={(e) => setFormData({ ...formData, tyre_size: e.target.value })}
+                placeholder="e.g. 215/55 R17 or Front: 135/70 R12 / Rear: 155/65 R12"
+                required
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="fuel_type">Fuel Type</Label>
@@ -874,6 +862,8 @@ const AdminVehicleDataPage = () => {
                 <option value="Petrol">Petrol</option>
                 <option value="Diesel">Diesel</option>
                 <option value="EV">EV</option>
+                <option value="CNG">CNG</option>
+                <option value="Hybrid">Hybrid</option>
               </select>
             </div>
 
@@ -954,7 +944,7 @@ const AdminVehicleDataPage = () => {
             </div>
 
             <div className="space-y-3 border-t pt-4">
-              <h4 className="font-semibold text-sm text-gray-700">Battery & Others</h4>
+              <h4 className="font-semibold text-sm text-gray-700">Service Prices</h4>
               <div className="grid grid-cols-2 gap-4">
                 {!isBuiltinHidden('amaron') && (
                 <div className="space-y-2">
@@ -977,7 +967,7 @@ const AdminVehicleDataPage = () => {
                 </div>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="car_wash_exterior_price">Car wash-Exterior wash</Label>
+                  <Label htmlFor="car_wash_exterior_price">Exterior Wash</Label>
                   <Input
                     id="car_wash_exterior_price"
                     value={formData.car_wash_exterior_price}
@@ -985,7 +975,7 @@ const AdminVehicleDataPage = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="car_wash_interior_exterior_price">Car wash-Interior + Exterior</Label>
+                  <Label htmlFor="car_wash_interior_exterior_price">Interior + Exterior Wash</Label>
                   <Input
                     id="car_wash_interior_exterior_price"
                     value={formData.car_wash_interior_exterior_price}
@@ -993,7 +983,7 @@ const AdminVehicleDataPage = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="car_wash_interior_exterior_underbody_price">Car Wash-Int + Ext + Underbody</Label>
+                  <Label htmlFor="car_wash_interior_exterior_underbody_price">Full Wash</Label>
                   <Input
                     id="car_wash_interior_exterior_underbody_price"
                     value={formData.car_wash_interior_exterior_underbody_price}
@@ -1001,16 +991,16 @@ const AdminVehicleDataPage = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="general_service_price">General Service Price</Label>
+                  <Label htmlFor="general_service_price">General Service</Label>
                   <Input
                     id="general_service_price"
                     value={formData.general_service_price}
                     onChange={(e) => setFormData({ ...formData, general_service_price: e.target.value })}
-                    placeholder="e.g. 600"
+                    placeholder="e.g. 600 or Contact Carzzi"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="pickup_drop_price">Pickup/Drop Price</Label>
+                  <Label htmlFor="pickup_drop_price">Pickup &amp; Drop</Label>
                   <Input
                     id="pickup_drop_price"
                     value={formData.pickup_drop_price}
@@ -1039,7 +1029,7 @@ const AdminVehicleDataPage = () => {
             </div>
 
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="battery_details">General Battery Details</Label>
+              <Label htmlFor="battery_details">Battery Details</Label>
               <Input
                 id="battery_details"
                 value={formData.battery_details}

@@ -173,6 +173,13 @@ const bookingSchema = mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {}
     },
+    // Items with no catalogue price (blank / Contact Carzzi / battery / no
+    // match): booked at ₹0, the amount is confirmed by Carzzi later.
+    quoteServices: [{
+      service: { type: mongoose.Schema.Types.ObjectId, ref: 'Service' },
+      name: String,
+      reason: String,
+    }],
     media: [{
       type: String, // URLs to images/videos
     }],

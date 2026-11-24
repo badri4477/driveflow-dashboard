@@ -198,6 +198,7 @@ class VehicleService {
     required String model,
     String? variant,
     String? fuelType,
+    int? year,
   }) async {
     try {
       final m = make.trim();
@@ -208,6 +209,8 @@ class VehicleService {
       if (v.isNotEmpty) queryParams['variant'] = v;
       final f = (fuelType ?? '').trim();
       if (f.isNotEmpty) queryParams['fuel_type'] = f;
+      // Catalogue rows are per year range; the manufacturing year picks the period.
+      if (year != null && year > 1950) queryParams['year'] = '$year';
 
       final queryString = queryParams.entries
           .map(

@@ -50,14 +50,19 @@ const CarWashPage: React.FC = () => {
             selectedVehicleData.make,
             selectedVehicleData.model,
             selectedVehicleData.variant || '',
-            selectedVehicleData.fuelType
+            selectedVehicleData.fuelType,
+            selectedVehicleData.year
           );
           if (details) {
+            const num = (v: unknown) => {
+              const n = Number(v);
+              return v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(n) && n > 0 ? n : null;
+            };
             setCarWashPrices({
-              exterior: details.car_wash_exterior_price ? Number(details.car_wash_exterior_price) : null,
-              interiorExterior: details.car_wash_interior_exterior_price ? Number(details.car_wash_interior_exterior_price) : null,
-              underbody: details.car_wash_interior_exterior_underbody_price ? Number(details.car_wash_interior_exterior_underbody_price) : null,
-              legacy: details.car_wash_price ? Number(details.car_wash_price) : null
+              exterior: num(details.car_wash_exterior_price),
+              interiorExterior: num(details.car_wash_interior_exterior_price),
+              underbody: num(details.car_wash_interior_exterior_underbody_price),
+              legacy: num(details.car_wash_price),
             });
           } else {
             setCarWashPrices({});
@@ -107,7 +112,11 @@ const CarWashPage: React.FC = () => {
       price = carWashPrices.legacy;
     }
 
-    return price !== null && price > 0 ? price : pkg.price;
+    if (price !== null && price > 0) return price;
+    // A vehicle is chosen but the catalogue has no wash price for it: Carzzi
+    // confirms the amount (matches calculateServicesTotal). Before a vehicle
+    // is picked, show the package's standard price.
+    return selectedVehicleData ? 0 : pkg.price;
   };
   const selectedLocationPincode = extractPincodeFromAddress(pickupLocation.address);
   const noServiceAreasConfigured = pincodesReady && availableServicePincodes.length === 0;
@@ -342,9 +351,13 @@ const CarWashPage: React.FC = () => {
               )}
 
               <div className="flex flex-col mb-4 mt-auto">
-                <span className="text-2xl sm:text-3xl font-bold text-primary">
-                  ₹{getPackagePrice(pkg)}
-                </span>
+                {getPackagePrice(pkg) > 0 ? (
+                  <span className="text-2xl sm:text-3xl font-bold text-primary tabular-nums">
+                    ₹{getPackagePrice(pkg)}
+                  </span>
+                ) : (
+                  <span className="text-base font-semibold text-muted-foreground">Price confirmed by Carzzi</span>
+                )}
               </div>
 
               <motion.button

@@ -87,6 +87,8 @@ export interface Booking {
   discountAmount?: number;
   coupon?: any;
   pickupDropPrice?: number;
+  /** Lines with no catalogue price, booked at ₹0 — Carzzi confirms the amount. */
+  quoteServices?: { service: string; name?: string; reason?: string }[];
   /** True when an admin booked this order on the customer's behalf. */
   createdByAdmin?: boolean;
   /** Merchant-set base service price (inspection). Overrides the catalogue price when set. */

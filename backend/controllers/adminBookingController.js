@@ -192,7 +192,7 @@ export const adminCreateBooking = async (req, res) => {
     }
 
     // ----- Pricing (server-side only) -----
-    const { total: servicesTotal, refMatch, services, unavailableBrandServices } = await calculateServicesTotal(
+    const { total: servicesTotal, catalogRow, services, unavailableBrandServices, quoteServices = [] } = await calculateServicesTotal(
       serviceIds,
       vehicleDoc._id,
       selectedBrands || {},
@@ -218,8 +218,8 @@ export const adminCreateBooking = async (req, res) => {
 
     const general = services.some(isGeneralService);
     let pickupDropPrice = 0;
-    if (general && refMatch?.pickup_drop_price) {
-      const extra = Number(refMatch.pickup_drop_price);
+    if (general && catalogRow?.pickup_drop_price) {
+      const extra = Number(catalogRow.pickup_drop_price);
       if (Number.isFinite(extra)) pickupDropPrice = extra;
     }
     const prepaid = services.some((s) => PREPAID_CATEGORIES.includes(s.category));
@@ -246,6 +246,7 @@ export const adminCreateBooking = async (req, res) => {
         paymentStatus: 'pending',
         selectedBrands: selectedBrands || {},
         serviceQuantities: serviceQuantities || {},
+        quoteServices: quoteServices.map((q) => ({ service: q.serviceId, name: q.serviceName, reason: q.reason })),
         merchant: merchant?._id,
         createdByAdmin: true,
         createdBy: req.user._id,

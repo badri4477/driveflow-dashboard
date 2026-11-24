@@ -194,6 +194,7 @@ class PaymentService {
         paymentId: paymentId,
         selectedBrands: tempData.selectedBrands,
         serviceQuantities: tempData.serviceQuantities,
+        quoteServices: Array.isArray(tempData.quoteServices) ? tempData.quoteServices : [],
         carWash: {
           isCarWashService: !!tempData.isCarWashService || !!tempData.isEssentialsService,
           beforeWashPhotos: [],

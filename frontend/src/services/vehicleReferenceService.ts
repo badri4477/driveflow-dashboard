@@ -21,6 +21,7 @@ export const searchVehicleReference = async (
   model: string,
   variant?: string,
   fuel_type?: string,
+  year?: number | null,
 ) => {
   const b = (brand_name || '').trim();
   const m = (model || '').trim();
@@ -30,6 +31,8 @@ export const searchVehicleReference = async (
   if (v) params.set('variant', v);
   const f = (fuel_type || '').trim();
   if (f) params.set('fuel_type', f);
+  // Catalogue rows are per year range (PDF rule: manufacturing year picks the period).
+  if (year && year > 1950) params.set('year', String(year));
   try {
     const response = await api.get(`/vehicle-reference/search?${params.toString()}`);
     return response.data;
