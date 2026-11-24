@@ -223,6 +223,9 @@ export const normalizeVehicle = (payload) => {
     bodyType: isMasked(pick(d, 'rcBodyTypeDesc')) ? '' : pick(d, 'rcBodyTypeDesc'),
     vehicleClass: isMasked(pick(d, 'rcVhClassDesc')) ? '' : pick(d, 'rcVhClassDesc'),
     seatCapacity: pick(d, 'rcSeatCap'),
+    manufacturingMonthYear: isMasked(manu) ? '' : manu,
+    insuranceUpto: isMasked(pick(d, 'rcInsuranceUpto')) ? '' : pick(d, 'rcInsuranceUpto'),
+    registrationUpto: isMasked(pick(d, 'rcRegnUpto')) ? '' : pick(d, 'rcRegnUpto'),
     rcStatus: pick(d, 'rcStatus'),
     consentStatus: clean(payload?.consentStatus),
     details: buildDetails(d),
@@ -283,6 +286,26 @@ export const lookupByRegistration = async (regnNo) => {
   if (!out.registrationNumber) out.registrationNumber = plate;
   cacheSet(key, out);
   return out;
+};
+
+/**
+ * Vahan fields to store on a saved vehicle, taken only from this server's own
+ * lookup cache (never from the client, so they can't be forged). Empty when the
+ * plate wasn't searched in the last 12 h (manual entry) — no API call is made.
+ */
+export const savedVahanFields = (regnNo) => {
+  const hit = cacheGet(`r:${normalizePlate(regnNo)}`);
+  if (!hit) return {};
+  const out = {
+    year: hit.year || undefined,
+    color: hit.color || undefined,
+    bodyType: hit.bodyType || undefined,
+    manufacturingMonthYear: hit.manufacturingMonthYear || undefined,
+    insuranceValidUpto: hit.insuranceUpto || undefined,
+    registrationValidUpto: hit.registrationUpto || undefined,
+    vahanFetchedAt: new Date(),
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
 };
 
 export const lookupByChassisEngine = async (chasiNo, engNo) => {

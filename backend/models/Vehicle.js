@@ -16,6 +16,12 @@ const vehicleSchema = new mongoose.Schema({
   vin: { type: String, maxlength: 30 },
   mileage: { type: Number },
   fuelType: { type: String, maxlength: 20 },
+  // From Vahan at add time (server-side cache only; blank for manual entry).
+  bodyType: { type: String, maxlength: 60 },
+  manufacturingMonthYear: { type: String, maxlength: 20 },
+  insuranceValidUpto: { type: String, maxlength: 20 },
+  registrationValidUpto: { type: String, maxlength: 20 },
+  vahanFetchedAt: { type: Date },
   frontTyres: { type: String, maxlength: 100 },
   rearTyres: { type: String, maxlength: 100 },
   batteryDetails: { type: String, maxlength: 100 },

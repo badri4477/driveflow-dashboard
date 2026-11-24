@@ -24,11 +24,15 @@ class VahanLookupSection extends StatefulWidget {
   /// 'auto' after a successful search, 'manual' after a failed one.
   final ValueChanged<String>? onModeChanged;
 
+  /// Show the full 19-field Vahan tile (admin). Customers see only the form fields.
+  final bool showDetails;
+
   const VahanLookupSection({
     super.key,
     required this.plateController,
     required this.onResult,
     this.allowLookup = true,
+    this.showDetails = true,
     this.describeFill,
     this.onModeChanged,
   });
@@ -229,7 +233,8 @@ class _VahanLookupSectionState extends State<VahanLookupSection> {
             ),
           ),
         ],
-        if (r != null &&
+        if (widget.showDetails &&
+            r != null &&
             r['details'] is List &&
             (r['details'] as List).isNotEmpty) ...[
           const SizedBox(height: 12),

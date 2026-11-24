@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Car, MoreVertical, ChevronRight, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cardHover } from '@/animations/variants';
+import type { VehicleInfoRow } from '@/lib/vehicleInfo';
 
 interface VehicleCardProps {
   id: string;
@@ -18,6 +19,8 @@ interface VehicleCardProps {
   onDelete?: () => void;
   className?: string;
   compact?: boolean;
+  /** Extra facts (e.g. from Vahan) listed under the plate; empty values are skipped. */
+  info?: VehicleInfoRow[];
 }
 
 export const VehicleCard: React.FC<VehicleCardProps> = ({
@@ -33,7 +36,9 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
   onDelete,
   className,
   compact = false,
+  info,
 }) => {
+  const infoRows = (info || []).filter((r) => r.value);
   if (compact) {
     return (
       <motion.div
@@ -136,6 +141,20 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
             </span>
           )}
         </div>
+
+        {infoRows.length > 0 && (
+          <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+            {infoRows.map((r) => (
+              <div key={r.label} className="min-w-0">
+                <dt className="text-xs text-muted-foreground">{r.label}</dt>
+                <dd className={cn('font-medium tabular-nums break-words', r.expired ? 'text-destructive' : 'text-foreground')}>
+                  {r.value}
+                  {r.expired && <span className="ml-1 text-xs font-normal">(expired)</span>}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
 
         {nextService && (
           <div className="mt-3 flex items-center gap-1.5 p-1.5 bg-accent/5 rounded-lg w-fit">

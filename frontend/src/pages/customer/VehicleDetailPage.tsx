@@ -6,6 +6,7 @@ import { serviceService, Service } from '@/services/serviceService';
 import { getVehicleReference } from '@/services/vehicleReferenceService';
 import { AutocompleteField, FUEL_TYPE_OPTIONS, ReferenceRecord } from './AddVehiclePage';
 import { isValidLicensePlate } from '@/lib/formValidation';
+import { vehicleInfoRows } from '@/lib/vehicleInfo';
 import { toast } from 'sonner';
 import {
   Car,
@@ -319,20 +320,17 @@ const CustomerVehicleDetailPage: React.FC = () => {
              </div>
              
              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                   <div className="space-y-1">
-                      <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Type</label>
-                      <p className="font-semibold text-sm sm:text-base">{vehicle.type || 'Car'}</p>
-                   </div>
-                   <div className="space-y-1">
-                      <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Variant</label>
-                      <p className="font-semibold text-sm sm:text-base">{vehicle.variant || 'N/A'}</p>
-                   </div>
-                   <div className="space-y-1">
-                      <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Fuel</label>
-                      <p className="font-semibold text-sm sm:text-base">{vehicle.fuelType || 'N/A'}</p>
-                   </div>
-                </div>
+                <dl className="grid grid-cols-2 gap-4">
+                   {vehicleInfoRows(vehicle).map((r) => (
+                     <div key={r.label} className="space-y-1 min-w-0">
+                        <dt className="text-xs text-muted-foreground">{r.label}</dt>
+                        <dd className={`font-semibold text-sm sm:text-base tabular-nums break-words ${r.expired ? 'text-destructive' : ''}`}>
+                          {r.value || <span className="font-normal text-muted-foreground">Not available</span>}
+                          {r.expired && <span className="ml-1 text-xs font-normal">(expired)</span>}
+                        </dd>
+                     </div>
+                   ))}
+                </dl>
 
                 <div className="pt-4 border-t border-border space-y-3">
                    <div className="flex items-center justify-between text-sm">

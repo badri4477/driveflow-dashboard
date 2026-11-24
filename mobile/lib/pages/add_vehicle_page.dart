@@ -28,8 +28,15 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
   final _pickupDropPriceController = TextEditingController();
   final String _type = 'Car';
   String? _fuelType = 'Petrol';
+  String? _year;
 
   static const _fuelTypeOptions = ['Petrol', 'Diesel', 'EV'];
+
+  /// Current year back to 1990, newest first — parity with web.
+  static final _yearOptions = List.generate(
+    DateTime.now().year - 1989,
+    (i) => '${DateTime.now().year - i}',
+  );
 
   // Brand → Model → Variant are dropdowns sourced from the Vehicle
   // Reference Data catalog (admin-managed) instead of free text, so
@@ -60,6 +67,7 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
       _selectedModel = editing.model;
       _selectedVariant = editing.variant;
       _fuelType = _normalizeFuelType(editing.fuelType) ?? editing.fuelType;
+      if (_yearOptions.contains('${editing.year}')) _year = '${editing.year}';
     }
     _loadReferenceCatalog();
   }
@@ -367,6 +375,7 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
       }
       final fuel = _normalizeFuelType((r['fuelType'] ?? '').toString());
       if (fuel != null && _fuelOptions.contains(fuel)) _fuelType = fuel;
+      if (_yearOptions.contains('${r['year']}')) _year = '${r['year']}';
       if (_selectedModel != null) {
         final y = r['year'];
         _selectedVariant = _matchVariant(
@@ -401,6 +410,12 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
       );
       return;
     }
+    if (_year == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please select the year')));
+      return;
+    }
     if (_fuelType == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a fuel type')),
@@ -418,6 +433,7 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
           make: _selectedBrand!,
           model: _selectedModel!,
           variant: _selectedVariant,
+          year: int.tryParse(_year ?? ''),
           fuelType: _fuelType,
           frontTyres: _frontTyresController.text.trim(),
           rearTyres: _rearTyresController.text.trim(),
@@ -428,6 +444,7 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
           make: _selectedBrand!,
           model: _selectedModel!,
           variant: _selectedVariant,
+          year: int.tryParse(_year ?? ''),
           type: _type,
           fuelType: _fuelType,
           frontTyres: _frontTyresController.text.trim(),
@@ -506,6 +523,7 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
           VahanLookupSection(
             plateController: _licensePlateController,
             allowLookup: !_isEditing,
+            showDetails: false,
             onResult: _applyVahanResult,
             onModeChanged: (m) => setState(() => _entryMode = m),
             describeFill: (_) =>
@@ -571,6 +589,15 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
                 matchAnywhere: true,
               ),
             ],
+            const SizedBox(height: 16),
+            _buildDropdownField(
+              'Year',
+              _year,
+              _yearOptions,
+              (v) => setState(() => _year = v),
+              hint: 'Select year',
+              required: true,
+            ),
             const SizedBox(height: 16),
             _buildDropdownField(
               'Fuel Type',

@@ -22,6 +22,11 @@ class Vehicle {
   final String? batteryDetails;
   final String? pickupDropPrice;
   final Map<String, dynamic>? healthIndicators;
+  // Saved from Vahan when the vehicle was added (null for manual entry).
+  final String? bodyType;
+  final String? manufacturingMonthYear;
+  final String? insuranceValidUpto;
+  final String? registrationValidUpto;
 
   Vehicle({
     required this.id,
@@ -47,6 +52,10 @@ class Vehicle {
     this.batteryDetails,
     this.pickupDropPrice,
     this.healthIndicators,
+    this.bodyType,
+    this.manufacturingMonthYear,
+    this.insuranceValidUpto,
+    this.registrationValidUpto,
   });
 
   factory Vehicle.fromJson(Map<String, dynamic> json) {
@@ -69,6 +78,10 @@ class Vehicle {
       batteryDetails: json['batteryDetails']?.toString(),
       pickupDropPrice: (json['pickupDropPrice'] ?? json['pickup_drop_price'])
           ?.toString(),
+      bodyType: json['bodyType']?.toString(),
+      manufacturingMonthYear: json['manufacturingMonthYear']?.toString(),
+      insuranceValidUpto: json['insuranceValidUpto']?.toString(),
+      registrationValidUpto: json['registrationValidUpto']?.toString(),
       healthIndicators: json['healthIndicators'] is Map
           ? Map<String, dynamic>.from(json['healthIndicators'])
           : null,
@@ -113,6 +126,12 @@ class Vehicle {
       if (rearTyres != null) 'rearTyres': rearTyres,
       if (batteryDetails != null) 'batteryDetails': batteryDetails,
       if (pickupDropPrice != null) 'pickupDropPrice': pickupDropPrice,
+      if (bodyType != null) 'bodyType': bodyType,
+      if (manufacturingMonthYear != null)
+        'manufacturingMonthYear': manufacturingMonthYear,
+      if (insuranceValidUpto != null) 'insuranceValidUpto': insuranceValidUpto,
+      if (registrationValidUpto != null)
+        'registrationValidUpto': registrationValidUpto,
       if (lastService != null) 'lastService': lastService?.toIso8601String(),
       if (nextService != null) 'nextService': nextService?.toIso8601String(),
       if (insurance != null) 'insurance': insurance!.toJson(),

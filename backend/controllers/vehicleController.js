@@ -2,6 +2,7 @@ import Vehicle from '../models/Vehicle.js';
 import { emitEntitySync } from '../utils/syncService.js';
 import { attachHealthPercentDisplay } from '../utils/vehicleHealthDisplay.js';
 import axios from 'axios';
+import { savedVahanFields } from '../services/vahanService.js';
 
 // ... (existing imports)
 
@@ -274,16 +275,18 @@ export const addVehicle = async (req, res) => {
   const { licensePlate, make, model, variant, year, fuelType, type, color, image, vin, frontTyres, rearTyres, batteryDetails, pickupDropPrice } = req.body;
 
   try {
+    const vahan = licensePlate ? savedVahanFields(licensePlate) : {};
     const vehicle = new Vehicle({
+      ...vahan,
       user: req.user._id,
       licensePlate,
       make,
       model,
       variant,
-      year,
+      year: year || vahan.year,
       fuelType,
       type: type || 'Car',
-      color,
+      color: vahan.color || color,
       image,
       vin,
       frontTyres,

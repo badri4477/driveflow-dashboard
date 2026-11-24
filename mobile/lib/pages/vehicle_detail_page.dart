@@ -10,6 +10,7 @@ import '../models/booking.dart';
 import '../models/vehicle.dart';
 import '../services/booking_service.dart';
 import '../core/socket_sync.dart';
+import '../core/vehicle_info.dart';
 import '../widgets/global_sync_refresh.dart';
 import '../services/vehicle_service.dart';
 import '../utils/auth_gate.dart';
@@ -1182,6 +1183,25 @@ class _VehicleDetailPageState extends State<VehicleDetailPage>
           Icons.local_gas_station_outlined,
           'Fuel',
           v.fuelType!.trim().toUpperCase(),
+        ),
+      );
+    }
+    // Saved from Vahan at add time — parity with web My Vehicles.
+    const vahanIcons = {
+      'Body type': Icons.directions_car_outlined,
+      'Colour': Icons.palette_outlined,
+      'Manufacturing month/year': Icons.event_outlined,
+      'Insurance valid till': Icons.verified_user_outlined,
+      'Registration valid till': Icons.assignment_outlined,
+    };
+    for (final r in vehicleInfoRows(v)) {
+      final icon = vahanIcons[r.label];
+      if (icon == null || r.value.trim().isEmpty) continue;
+      list.add(
+        _VehicleSpecItem(
+          icon,
+          r.label,
+          r.expired ? '${r.value} (expired)' : r.value,
         ),
       );
     }

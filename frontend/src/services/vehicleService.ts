@@ -12,6 +12,11 @@ export interface Vehicle {
     vin?: string;
     mileage?: number;
     fuelType?: string;
+    /** Saved from Vahan when the vehicle was added (blank for manual entry). */
+    bodyType?: string;
+    manufacturingMonthYear?: string;
+    insuranceValidUpto?: string;
+    registrationValidUpto?: string;
     frontTyres?: string;
     rearTyres?: string;
     batteryDetails?: string;

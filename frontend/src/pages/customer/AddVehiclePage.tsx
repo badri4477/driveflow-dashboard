@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { getVehicleReference } from '@/services/vehicleReferenceService';
 import { isValidLicensePlate } from '@/lib/formValidation';
 import VahanLookup, { VehicleEntryMode } from '@/components/vehicle/VahanLookup';
+import { vehicleInfoRows } from '@/lib/vehicleInfo';
 
 export interface ReferenceRecord {
   brand_name?: string;
@@ -161,6 +162,9 @@ export const AutocompleteField: React.FC<{
 
 export const FUEL_TYPE_OPTIONS = ['Petrol', 'Diesel', 'EV'];
 
+/** Current year back to 1990, newest first. */
+const YEAR_OPTIONS = Array.from({ length: new Date().getFullYear() - 1989 }, (_, i) => String(new Date().getFullYear() - i));
+
 const AddVehiclePage: React.FC = () => {
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
@@ -181,6 +185,7 @@ const AddVehiclePage: React.FC = () => {
     make: '',
     model: '',
     variant: '',
+    year: '',
     fuel: '',
     frontTyres: '',
     rearTyres: '',
@@ -298,7 +303,7 @@ const AddVehiclePage: React.FC = () => {
   };
 
   const resetForm = () => {
-    setFormData({ licensePlate: '', make: '', model: '', variant: '', fuel: '', frontTyres: '', rearTyres: '' });
+    setFormData({ licensePlate: '', make: '', model: '', variant: '', year: '', fuel: '', frontTyres: '', rearTyres: '' });
     setEntryMode(null);
   };
 
@@ -313,6 +318,10 @@ const AddVehiclePage: React.FC = () => {
       toast.error('Please select a brand, model and variant from the suggestions');
       return;
     }
+    if (!formData.year) {
+      toast.error('Please select the year');
+      return;
+    }
     if (!formData.fuel.trim()) {
       toast.error('Please select a fuel type');
       return;
@@ -325,6 +334,7 @@ const AddVehiclePage: React.FC = () => {
         make: formData.make.trim(),
         model: formData.model.trim(),
         variant: formData.variant.trim(),
+        year: Number(formData.year),
         fuelType: formData.fuel.trim() || undefined,
         frontTyres: formData.frontTyres,
         rearTyres: formData.rearTyres,
@@ -380,13 +390,15 @@ const AddVehiclePage: React.FC = () => {
               mode={entryMode}
               onModeChange={setEntryMode}
               idPrefix="av"
+              showDetails={false}
               plate={formData.licensePlate}
               onPlateChange={(p) => setFormData((prev) => ({ ...prev, licensePlate: p }))}
               catalog={catalog}
               fuelOptions={FUEL_TYPE_OPTIONS}
-              onFill={(fill) =>
+              onFill={(fill, v) =>
                 setFormData((prev) => ({
                   ...prev,
+                  year: v.year && YEAR_OPTIONS.includes(String(v.year)) ? String(v.year) : prev.year,
                   licensePlate: fill.licensePlate || prev.licensePlate,
                   make: fill.make || prev.make,
                   model: fill.make ? fill.model || '' : prev.model,
@@ -428,6 +440,23 @@ const AddVehiclePage: React.FC = () => {
                 onSelect={(v) => setFormData((prev) => ({ ...prev, variant: v }))}
                 matchMode="contains"
               />
+              <div>
+                <label htmlFor="av-year" className="block text-sm font-medium text-foreground mb-2">
+                  Year <span className="text-destructive">*</span>
+                </label>
+                <select
+                  id="av-year"
+                  value={formData.year}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, year: e.target.value }))}
+                  required
+                  className="w-full px-4 py-3 bg-muted/50 border border-border rounded-xl text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="">Select year</option>
+                  {YEAR_OPTIONS.map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
                   Fuel Type <span className="text-destructive">*</span>
@@ -497,6 +526,7 @@ const AddVehiclePage: React.FC = () => {
                 image={vehicle.image}
                 nextService={vehicle.nextService}
                 status={vehicle.status}
+                info={vehicleInfoRows(vehicle).filter((r) => !['Registration number', 'Make', 'Model', 'Fuel type'].includes(r.label))}
                 onClick={() => navigate(`/vehicles/${vehicle._id}`)}
               />
             </motion.div>

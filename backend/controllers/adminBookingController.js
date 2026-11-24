@@ -9,6 +9,7 @@ import { normalizeIndianMobile, sendWhatsAppMessage, sendFlowSms } from '../util
 import { createTrackingToken } from '../utils/trackingToken.js';
 import { placeholderEmailFor } from '../utils/placeholderEmail.js';
 import { emitEntitySync } from '../utils/syncService.js';
+import { savedVahanFields } from '../services/vahanService.js';
 import { logAudit } from './auditController.js';
 import {
   calculateServicesTotal,
@@ -177,6 +178,7 @@ export const adminCreateBooking = async (req, res) => {
         return res.status(400).json({ message: 'Vehicle make, model and registration number are required' });
       }
       vehicleDoc = await Vehicle.create({
+        ...savedVahanFields(licensePlate),
         user: user._id,
         make,
         model,

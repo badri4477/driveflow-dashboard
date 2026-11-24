@@ -20,13 +20,15 @@ interface Props {
   onModeChange: (mode: VehicleEntryMode) => void;
   plateError?: React.ReactNode;
   idPrefix?: string;
+  /** Show the full 19-field Vahan panel + PDF (admin). Customers see only the form fields. */
+  showDetails?: boolean;
 }
 
 const inputCls =
   'w-full px-4 py-3 bg-muted/50 border border-border rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 uppercase disabled:opacity-60';
 
 /** Registration number + Search (Vahan). Success fills the details; failure opens the manual fields. */
-const VahanLookup: React.FC<Props> = ({ plate, onPlateChange, catalog, fuelOptions, onFill, mode, onModeChange, plateError, idPrefix = 'vahan' }) => {
+const VahanLookup: React.FC<Props> = ({ plate, onPlateChange, catalog, fuelOptions, onFill, mode, onModeChange, plateError, idPrefix = 'vahan', showDetails = true }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ v: VahanVehicle; fill: VahanFill } | null>(null);
@@ -119,7 +121,7 @@ const VahanLookup: React.FC<Props> = ({ plate, onPlateChange, catalog, fuelOptio
             </div>
           </div>
         )}
-        {result && mode === 'auto' && <VahanDetailsPanel vehicle={result.v} />}
+        {showDetails && result && mode === 'auto' && <VahanDetailsPanel vehicle={result.v} />}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import '../core/api_client.dart';
 import '../models/vehicle.dart';
 import '../services/vehicle_service.dart';
 import '../core/socket_sync.dart';
+import '../core/vehicle_info.dart';
 import '../state/auth_provider.dart';
 import '../widgets/customer_drawer.dart';
 import '../widgets/global_sync_refresh.dart';
@@ -203,90 +204,102 @@ class _MyVehiclesPageState extends State<MyVehiclesPage> {
           body: !context.watch<AuthProvider>().isAuthenticated
               ? const GuestLoginPrompt(
                   title: 'Your vehicles',
-                  message:
-                      'Log in to add vehicles and book doorstep service.',
+                  message: 'Log in to add vehicles and book doorstep service.',
                 )
               : RefreshIndicator(
-            onRefresh: _load,
-            child: _loading && _vehicles.isEmpty
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                ? ListView(
-                    padding: AppSpacing.edgeInsetsAllDefault,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: AppSpacing.section),
-                        child: Column(
+                  onRefresh: _load,
+                  child: _loading && _vehicles.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null
+                      ? ListView(
+                          padding: AppSpacing.edgeInsetsAllDefault,
                           children: [
-                            Text(
-                              'Failed to load vehicles',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            AppSpacing.verticalSmall,
-                            Text(
-                              _error!,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            AppSpacing.verticalMedium,
-                            OutlinedButton(
-                              onPressed: _load,
-                              child: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  )
-                : _vehicles.isEmpty
-                ? ListView(
-                    padding: AppSpacing.edgeInsetsAllDefault,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: AppSpacing.section),
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.directions_car_outlined,
-                              size: 64,
-                              color: AppColors.textSecondary.withValues(
-                                alpha: 0.5,
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                top: AppSpacing.section,
+                              ),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    'Failed to load vehicles',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
+                                  AppSpacing.verticalSmall,
+                                  Text(
+                                    _error!,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                  AppSpacing.verticalMedium,
+                                  OutlinedButton(
+                                    onPressed: _load,
+                                    child: const Text('Retry'),
+                                  ),
+                                ],
                               ),
                             ),
-                            AppSpacing.verticalMedium,
-                            Text(
-                              'Your garage is empty',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            AppSpacing.verticalSmall,
-                            Text(
-                              'Add your vehicles to get started with services.',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            AppSpacing.verticalSection,
-                            ElevatedButton(
-                              onPressed: _openAddVehicleSheet,
-                              child: const Text('Add My First Vehicle'),
+                          ],
+                        )
+                      : _vehicles.isEmpty
+                      ? ListView(
+                          padding: AppSpacing.edgeInsetsAllDefault,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                top: AppSpacing.section,
+                              ),
+                              child: Column(
+                                children: [
+                                  Icon(
+                                    Icons.directions_car_outlined,
+                                    size: 64,
+                                    color: AppColors.textSecondary.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                  ),
+                                  AppSpacing.verticalMedium,
+                                  Text(
+                                    'Your garage is empty',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
+                                  AppSpacing.verticalSmall,
+                                  Text(
+                                    'Add your vehicles to get started with services.',
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                  AppSpacing.verticalSection,
+                                  ElevatedButton(
+                                    onPressed: _openAddVehicleSheet,
+                                    child: const Text('Add My First Vehicle'),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
+                        )
+                      : ListView.separated(
+                          padding: AppSpacing.edgeInsetsAllDefault,
+                          itemCount: _vehicles.length,
+                          separatorBuilder: (context, _) =>
+                              AppSpacing.verticalMedium,
+                          itemBuilder: (context, index) {
+                            final v = _vehicles[index];
+                            return _VehicleCard(
+                              vehicle: v,
+                              onBookService: () => _showBookServiceDialog(v),
+                            );
+                          },
                         ),
-                      ),
-                    ],
-                  )
-                : ListView.separated(
-                    padding: AppSpacing.edgeInsetsAllDefault,
-                    itemCount: _vehicles.length,
-                    separatorBuilder: (context, _) => AppSpacing.verticalMedium,
-                    itemBuilder: (context, index) {
-                      final v = _vehicles[index];
-                      return _VehicleCard(
-                        vehicle: v,
-                        onBookService: () => _showBookServiceDialog(v),
-                      );
-                    },
-                  ),
-          ),
+                ),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: _openAddVehicleSheet,
             icon: const Icon(Icons.add),
@@ -577,6 +590,54 @@ class _VehicleCardState extends State<_VehicleCard> {
                   ),
                 ),
               ],
+              // Vahan facts saved at add time (skipped when empty) — parity with web.
+              ...vehicleInfoRows(v)
+                  .where(
+                    (r) =>
+                        r.value.trim().isNotEmpty &&
+                        !const {
+                          'Registration number',
+                          'Make',
+                          'Model',
+                          'Fuel type',
+                        }.contains(r.label),
+                  )
+                  .map(
+                    (r) => Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 5,
+                            child: Text(
+                              r.label,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: isDark
+                                        ? AppColors.textSecondary
+                                        : AppColors.textSecondaryLight,
+                                  ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 6,
+                            child: Text(
+                              r.expired ? '${r.value} (expired)' : r.value,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: r.expired
+                                        ? Theme.of(context).colorScheme.error
+                                        : null,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
               AppSpacing.verticalMedium,
               Row(
                 children: [
