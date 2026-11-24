@@ -229,61 +229,38 @@ export const normalizeVehicle = (payload) => {
   };
 };
 
-// Labels for the full "vehicle details" report (web panel + PDF, mobile list), in display order.
-const FIELD_LABELS = [
-  ['rcRegnNo', 'Registration number'],
-  ['rcStatus', 'RC status'],
-  ['rcMakerDesc', 'Maker'],
-  ['rcMakerModel', 'Model'],
-  ['rcVhClassDesc', 'Vehicle class'],
-  ['rcVchCatg', 'Vehicle category'],
-  ['rcBodyTypeDesc', 'Body type'],
-  ['rcFuelDesc', 'Fuel'],
-  ['rcColor', 'Colour'],
-  ['rcManuMonthYr', 'Manufactured (month/year)'],
-  ['rcRegnDt', 'Registration date'],
-  ['rcRegnUpto', 'Registration valid till'],
-  ['rcFitUpto', 'Fitness valid till'],
-  ['rcInsuranceUpto', 'Insurance valid till'],
-  ['rcInsuranceComp', 'Insurance company'],
-  ['rcPuccUpto', 'PUCC valid till'],
-  ['rcTaxUpto', 'Tax valid till'],
-  ['rcNormsDesc', 'Emission norms'],
-  ['rcCubicCap', 'Engine capacity (cc)'],
-  ['rcNoCyl', 'Cylinders'],
-  ['rcSeatCap', 'Seating capacity'],
-  ['rcWheelbase', 'Wheelbase (mm)'],
-  ['rcGvw', 'Gross weight (kg)'],
-  ['rcUnldWt', 'Unladen weight (kg)'],
-  ['rcVhType', 'Vehicle type'],
-  ['rcRegisteredAt', 'Registered at (RTO)'],
-  ['rcOwnerCdDesc', 'Owner type'],
-  ['rcOwnerSr', 'Owner serial no.'],
-  ['rcChasiNo', 'Chassis number'],
-  ['rcEngNo', 'Engine number'],
-  ['rcBlackListStatus', 'Blacklist status'],
-  ['rcNocDetails', 'NOC details'],
+// The 19 fields of the Vahan data agreement (Annexure-I), in its order and groups.
+// Always all 19 are returned; a field Vahan didn't send comes back with provided=false.
+// Owner/personal fields are not in the agreement and never leave the server.
+export const ANNEXURE_FIELDS = [
+  { sno: 1, group: 'Vehicle Insurance Details', label: 'Insurance validity', keys: ['rcInsuranceUpto'] },
+  { sno: 2, group: 'Vehicle Validity Norms', label: 'Registration validity', keys: ['rcRegnUpto'] },
+  { sno: 3, group: 'Vehicle Validity Norms', label: 'Fitness validity', keys: ['rcFitUpto'] },
+  { sno: 4, group: 'Vehicle Validity Norms', label: 'PUCC validity', keys: ['rcPuccUpto', 'rcPuccValidity'] },
+  { sno: 5, group: 'Vehicle Registration Details', label: 'Registration number', keys: ['rcRegnNo'] },
+  { sno: 6, group: 'Vehicle Registration Details', label: 'Registration date', keys: ['rcRegnDt'] },
+  { sno: 7, group: 'Vehicle Registration Details', label: 'Registering authority', keys: ['rcRegisteredAt'] },
+  { sno: 8, group: 'Vehicle Registration Details', label: 'Vehicle status', keys: ['rcStatus'] },
+  { sno: 9, group: 'Vehicle Details', label: 'Maker name', keys: ['rcMakerDesc'] },
+  { sno: 10, group: 'Vehicle Details', label: 'Model name', keys: ['rcMakerModel'] },
+  { sno: 11, group: 'Vehicle Details', label: 'Vehicle colour', keys: ['rcColor'] },
+  { sno: 12, group: 'Vehicle Details', label: 'Vehicle body type', keys: ['rcBodyTypeDesc'] },
+  { sno: 13, group: 'Vehicle Details', label: 'Manufacturing month/year', keys: ['rcManuMonthYr'] },
+  { sno: 14, group: 'Vehicle Details', label: 'Vehicle class', keys: ['rcVhClassDesc'] },
+  { sno: 15, group: 'Vehicle Details', label: 'Vehicle category', keys: ['rcVchCatg', 'rcVehCatg'] },
+  { sno: 16, group: 'Vehicle Details', label: 'Vehicle type', keys: ['rcVhType'] },
+  { sno: 17, group: 'Vehicle Details', label: 'Fuel type', keys: ['rcFuelDesc'] },
+  { sno: 18, group: 'Vehicle Details', label: 'Emission norms', keys: ['rcNormsDesc'] },
+  { sno: 19, group: 'Vehicle Details', label: 'Cubic capacity', keys: ['rcCubicCap'] },
 ];
-const LABEL_MAP = new Map(FIELD_LABELS);
-// Personal data never leaves the server, even in the full report.
-const PII_RE = /(OwnerName|FName|Father|Address|Financer|Mobile|Email|Phone|Aadhaar|Aadhar|Pan(No)?$|SaleAmt)/i;
-const humanize = (k) =>
-  k.replace(/^rc/, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
 
-/** Every non-personal field Vahan returned, as [{ key, label, value, masked }] in a stable order. */
-const buildDetails = (d) => {
-  const keys = Object.keys(d).filter((k) => !PII_RE.test(k) && clean(d[k]));
-  const order = (k) => {
-    const i = FIELD_LABELS.findIndex(([key]) => key === k);
-    return i === -1 ? FIELD_LABELS.length : i;
-  };
-  return keys
-    .sort((a, b) => order(a) - order(b) || a.localeCompare(b))
-    .map((k) => {
-      const value = clean(d[k]);
-      return { key: k, label: LABEL_MAP.get(k) || humanize(k), value, masked: isMasked(value) };
-    });
-};
+/** The 19 Annexure-I fields as [{ sno, group, key, label, value, provided, masked }]. */
+const buildDetails = (d) =>
+  ANNEXURE_FIELDS.map(({ sno, group, label, keys }) => {
+    const key = keys.find((k) => clean(d[k])) || keys[0];
+    const value = clean(d[key]);
+    return { sno, group, key, label, value, provided: Boolean(value), masked: isMasked(value) };
+  });
 
 // ---- public API -----------------------------------------------------------
 

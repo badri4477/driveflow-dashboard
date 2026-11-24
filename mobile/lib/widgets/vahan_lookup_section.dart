@@ -242,8 +242,8 @@ class _VahanLookupSectionState extends State<VahanLookupSection> {
   }
 }
 
-/// Full Vahan output (owner details are stripped server-side) — web parity
-/// with `VahanDetailsPanel.tsx`; the PDF download is web-only for now.
+/// The 19 Annexure-I Vahan fields, grouped, with "Not provided by Vahan" for
+/// gaps — parity with web `VahanDetailsPanel.tsx` (PDF download is web-only).
 class _VahanDetailsTile extends StatelessWidget {
   final List<Map> details;
   const _VahanDetailsTile({required this.details});
@@ -251,6 +251,60 @@ class _VahanDetailsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final provided = details.where((d) => d['provided'] != false).length;
+    final rows = <Widget>[];
+    String? group;
+    for (final d in details) {
+      final g = '${d['group'] ?? ''}';
+      if (g.isNotEmpty && g != group) {
+        group = g;
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Text(
+              g.toUpperCase(),
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        );
+      }
+      final has = d['provided'] != false;
+      final value = !has
+          ? 'Not provided by Vahan'
+          : '${d['value'] ?? ''}${d['masked'] == true ? ' (hidden by Vahan)' : ''}';
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  '${d['sno'] != null ? '${d['sno']}. ' : ''}${d['label'] ?? ''}',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  value,
+                  style: has
+                      ? const TextStyle(fontWeight: FontWeight.w600)
+                      : theme.textTheme.bodySmall?.copyWith(
+                          fontStyle: FontStyle.italic,
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
@@ -262,35 +316,10 @@ class _VahanDetailsTile extends StatelessWidget {
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           title: Text(
-            'Full Vahan details (${details.length} fields)',
+            'Full Vahan details ($provided of ${details.length} provided)',
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
-          children: [
-            for (final d in details)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: Text(
-                        '${d['label'] ?? ''}',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 3,
-                      child: Text(
-                        '${d['value'] ?? ''}${d['masked'] == true ? ' (hidden by Vahan)' : ''}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
+          children: rows,
         ),
       ),
     );

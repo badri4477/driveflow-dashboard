@@ -92,8 +92,8 @@ export interface VahanVehicle {
     engineNumber: string;
     bodyType: string;
     vehicleClass: string;
-    /** Every non-personal field Vahan returned (owner name/address are stripped server-side). */
-    details?: { key: string; label: string; value: string; masked: boolean }[];
+    /** The 19 Annexure-I fields, always all present in agreement order (provided=false when Vahan sent nothing). */
+    details?: { sno: number; group: string; key: string; label: string; value: string; provided: boolean; masked: boolean }[];
 }
 
 export const vahanService = {
