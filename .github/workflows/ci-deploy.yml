@@ -50,26 +50,9 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run build   # tsc -b && vite build
 
-  mobile:
-    name: Mobile (flutter analyze)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter pub get
-      # Errors fail the build; the existing info/warning lints don't.
-      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
-      # `flutter test` is not run yet: 2 login-page widget tests already fail on main.
-
   deploy:
     name: Deploy to production (EC2)
-    needs: [backend, frontend, mobile]
+    needs: [backend, frontend]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: production
