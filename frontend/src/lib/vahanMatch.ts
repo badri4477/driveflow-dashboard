@@ -84,15 +84,42 @@ export function matchVariant(vahanModel: string, model: string, allRows: Catalog
   // PDF: filter by year range first, then narrow by variant.
   const inPeriod = allRows.filter((r) => rowCovers(r, year));
   const rows = inPeriod.length ? inPeriod : allRows;
+
+  // Only one trim sold that year with this fuel (e.g. 2017 GLS diesel = GL 350 CDI) → it.
+  const sameFuel = fuel ? rows.filter((r) => (r.fuel_type || '').toLowerCase() === fuel.toLowerCase()) : [];
+  const onlyVariants = new Set(sameFuel.map((r) => (r.brand_model || '').trim()).filter(Boolean));
+  if (inPeriod.length && onlyVariants.size === 1) return [...onlyVariants][0];
+
   const modelWords = new Set(words(model));
   const trim = words(vahanModel).filter((w) => !modelWords.has(w));
-  if (trim.length === 0) return '';
+  // Every Vahan token incl. single letters ("CITY 1.5 V MT" → …, V, MT), "+" as PLUS.
+  const tokens = vahanModel
+    .toUpperCase()
+    .replace(/\s*\+/g, ' PLUS')
+    .split(/[^A-Z0-9]+/)
+    .filter((t) => t && !modelWords.has(t));
+  const squash = (s: string) => s.toUpperCase().replace(/\s*\+/g, 'PLUS').replace(/[^A-Z0-9]/g, '');
+  // A trim that equals 1–3 consecutive Vahan words exactly ("AX7 L" = AX7+L, "V" = V).
+  const exactTrim = (v: string) => {
+    const target = squash(v);
+    if (!target) return false;
+    for (let i = 0; i < tokens.length; i++) {
+      let joined = '';
+      for (let j = i; j < Math.min(tokens.length, i + 3); j++) {
+        joined += tokens[j];
+        if (joined === target) return true;
+      }
+    }
+    return false;
+  };
+  if (trim.length === 0 && tokens.length === 0) return '';
   const best = new Map<string, number>();
   for (const r of rows) {
     const v = (r.brand_model || '').trim();
     if (!v) continue;
     const vw = new Set(words(v));
-    let score = 0;
+    // Exact whole-trim match outranks word overlap; longer exact trims win (AX7 L over AX7).
+    let score = exactTrim(v) ? 30 + squash(v).length / 10 : 0;
     for (const t of trim) {
       if (vw.has(t)) score += 10;
       else if ([...vw].some((w) => w.length >= 3 && (w.startsWith(t) || t.startsWith(w)))) score += 6;

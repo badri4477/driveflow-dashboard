@@ -394,7 +394,6 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     final trim = _words(
       vahanModel,
     ).where((w) => !modelWords.contains(w)).toList();
-    if (trim.isEmpty) return null;
     final best = <String, double>{};
     // PDF: filter by year range first, then narrow by variant.
     final modelRows = _allReferences
@@ -405,11 +404,50 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
         )
         .toList();
     final inPeriod = modelRows.where((r) => _rowCoversYear(r, year)).toList();
-    for (final r in (inPeriod.isNotEmpty ? inPeriod : modelRows)) {
+    final rows = inPeriod.isNotEmpty ? inPeriod : modelRows;
+
+    // Only one trim sold that year with this fuel (e.g. 2017 GLS diesel) → it.
+    if (fuel != null && inPeriod.isNotEmpty) {
+      final only = rows
+          .where((r) => _normalizeFuelType(r['fuel_type']?.toString()) == fuel)
+          .map((r) => (r['brand_model'] ?? '').toString().trim())
+          .where((v) => v.isNotEmpty)
+          .toSet();
+      if (only.length == 1) return only.first;
+    }
+
+    // Every Vahan token incl. single letters ("CITY 1.5 V MT" → V), "+" as PLUS.
+    final tokens = vahanModel
+        .toUpperCase()
+        .replaceAll(RegExp(r'\s*\+'), ' PLUS')
+        .split(RegExp(r'[^A-Z0-9]+'))
+        .where((t) => t.isNotEmpty && !modelWords.contains(t))
+        .toList();
+    String squash(String s) => s
+        .toUpperCase()
+        .replaceAll(RegExp(r'\s*\+'), 'PLUS')
+        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    // A trim equal to 1–3 consecutive Vahan words ("AX7 L" = AX7+L, "V" = V).
+    bool exactTrim(String v) {
+      final target = squash(v);
+      if (target.isEmpty) return false;
+      for (var i = 0; i < tokens.length; i++) {
+        var joined = '';
+        for (var j = i; j < tokens.length && j < i + 3; j++) {
+          joined += tokens[j];
+          if (joined == target) return true;
+        }
+      }
+      return false;
+    }
+
+    if (trim.isEmpty && tokens.isEmpty) return null;
+    for (final r in rows) {
       final v = (r['brand_model'] ?? '').toString().trim();
       if (v.isEmpty) continue;
       final vw = _words(v).toSet();
-      double score = 0;
+      // Exact whole-trim match outranks word overlap; longer wins (AX7 L > AX7).
+      double score = exactTrim(v) ? 30 + squash(v).length / 10 : 0;
       for (final t in trim) {
         if (vw.contains(t)) {
           score += 10;
