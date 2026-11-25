@@ -326,6 +326,64 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
   /// Vahan "I20 ASTA-CRDI BSIV" + catalog "2012 [ Asta ]": most shared trim
   /// words, then same fuel, then newest generation year <= manufacturing
   /// year. Returns null on a tie so the user chooses.
+  /// Vahan badge ("E 220 D" → E220D, "520D") → (catalogue model, variant or
+  /// null when several trims share it). Null unless exactly one model fits.
+  (String, String?)? _matchModelByBadge(
+    String vahanModel,
+    String? fuel,
+    int? year,
+  ) {
+    if (vahanModel.isEmpty || vahanModel.contains('*')) return null;
+    final brandWords = {
+      ..._words(_selectedBrand ?? ''),
+      'MERCEDES',
+      'BENZ',
+      'MOTORS',
+      'INDIA',
+      'LTD',
+    };
+    // Keep single letters: the badge is "E 220 D", not "220".
+    final v = vahanModel
+        .toUpperCase()
+        .split(RegExp(r'[^A-Z0-9]+'))
+        .where(
+          (w) =>
+              w.isNotEmpty &&
+              !brandWords.contains(w) &&
+              !_trimNoise.contains(w),
+        )
+        .join();
+    final badge = RegExp(r'^[A-Z]{0,4}\d{2,3}[A-Z]?').firstMatch(v)?.group(0);
+    if (badge == null || !RegExp(r'\d').hasMatch(badge)) return null;
+    String compact(String s) =>
+        s.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    var cands = _allReferences
+        .where(
+          (r) =>
+              (r['brand_name'] ?? '').toString() == _selectedBrand &&
+              compact((r['brand_model'] ?? '').toString()).startsWith(badge),
+        )
+        .toList();
+    if (cands.isEmpty) return null;
+    final inYear = cands.where((r) => _rowCoversYear(r, year)).toList();
+    if (inYear.isNotEmpty) cands = inYear;
+    if (fuel != null) {
+      final byFuel = cands
+          .where((r) => _normalizeFuelType(r['fuel_type']?.toString()) == fuel)
+          .toList();
+      if (byFuel.isNotEmpty) cands = byFuel;
+    }
+    final models = cands
+        .map((r) => (r['model'] ?? '').toString().trim())
+        .where((m) => m.isNotEmpty)
+        .toSet();
+    if (models.length != 1) return null;
+    final variants = cands
+        .map((r) => (r['brand_model'] ?? '').toString().trim())
+        .toSet();
+    return (models.first, variants.length == 1 ? variants.first : null);
+  }
+
   String? _matchVariant(String vahanModel, String? fuel, int? year) {
     if (vahanModel.isEmpty ||
         vahanModel.contains('*') ||
@@ -338,11 +396,16 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
     ).where((w) => !modelWords.contains(w)).toList();
     if (trim.isEmpty) return null;
     final best = <String, double>{};
-    for (final r in _allReferences) {
-      if ((r['brand_name'] ?? '').toString() != _selectedBrand ||
-          (r['model'] ?? '').toString() != _selectedModel) {
-        continue;
-      }
+    // PDF: filter by year range first, then narrow by variant.
+    final modelRows = _allReferences
+        .where(
+          (r) =>
+              (r['brand_name'] ?? '').toString() == _selectedBrand &&
+              (r['model'] ?? '').toString() == _selectedModel,
+        )
+        .toList();
+    final inPeriod = modelRows.where((r) => _rowCoversYear(r, year)).toList();
+    for (final r in (inPeriod.isNotEmpty ? inPeriod : modelRows)) {
       final v = (r['brand_model'] ?? '').toString().trim();
       if (v.isEmpty) continue;
       final vw = _words(v).toSet();
@@ -397,24 +460,54 @@ class _AddVehiclePageState extends State<AddVehiclePage> {
         final vm = (r['model'] ?? '').toString();
         if (vm.isNotEmpty && !vm.contains('*')) {
           final nvm = _norm(vm);
+          // Offsets where a Vahan word starts: a model matching at a word
+          // start beats one buried mid-word ("GLA-CLASS" → GLA, not A-Class).
+          final starts = <int>{};
+          var pos = 0;
+          for (final tok in vm.toUpperCase().split(RegExp(r'[^A-Z0-9*]+'))) {
+            if (tok.isEmpty) continue;
+            starts.add(pos);
+            pos += tok.length;
+          }
           final hits =
               _modelOptions
                   .where((m) => m.isNotEmpty && nvm.contains(_norm(m)))
                   .toList()
-                ..sort((a, b) => b.length.compareTo(a.length));
+                ..sort((a, b) {
+                  final ia = nvm.indexOf(_norm(a));
+                  final ib = nvm.indexOf(_norm(b));
+                  final sa = starts.contains(ia) ? 1 : 0;
+                  final sb = starts.contains(ib) ? 1 : 0;
+                  if (sa != sb) return sb - sa;
+                  if (a.length != b.length) return b.length - a.length;
+                  return ia - ib;
+                });
           if (hits.isNotEmpty) _selectedModel = hits.first;
         }
       }
       final fuel = _normalizeFuelType((r['fuelType'] ?? '').toString());
       if (fuel != null && _fuelOptions.contains(fuel)) _fuelType = fuel;
       if (_yearOptions.contains('${r['year']}')) _year = '${r['year']}';
+      final y = r['year'];
+      final year = y is int ? y : int.tryParse('$y');
       if (_selectedModel != null) {
-        final y = r['year'];
         _selectedVariant = _matchVariant(
           (r['model'] ?? '').toString(),
           fuel,
-          y is int ? y : int.tryParse('$y'),
+          year,
         );
+      } else if (_selectedBrand != null) {
+        // Badge-style models (Mercedes "E 220 D", BMW "520D") → family via
+        // the variants — parity with web vahanMatch.matchModelByBadge.
+        final byBadge = _matchModelByBadge(
+          (r['model'] ?? '').toString(),
+          fuel,
+          year,
+        );
+        if (byBadge != null) {
+          _selectedModel = byBadge.$1;
+          _selectedVariant = byBadge.$2;
+        }
       }
       _resetFuelTypeIfInvalid();
       _fillTick++;

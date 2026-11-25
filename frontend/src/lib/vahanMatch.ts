@@ -25,9 +25,29 @@ export function matchBrand(maker: string, brands: string[]): string {
 export function matchModel(vahanModel: string, models: string[]): string {
   if (!vahanModel || vahanModel.includes('*')) return '';
   const vm = norm(vahanModel);
-  const hits = models.filter((m) => m && vm.includes(norm(m))).sort((a, b) => b.length - a.length);
-  return hits[0] || '';
+  // Offsets in `vm` where a Vahan word starts ("GLA-CLASS" → 0, 3): a model
+  // matching at a word start beats one buried mid-word (GLA over A-Class).
+  const starts = new Set<number>();
+  let pos = 0;
+  for (const tok of vahanModel.toUpperCase().split(/[^A-Z0-9*]+/).filter(Boolean)) {
+    starts.add(pos);
+    pos += tok.length;
+  }
+  const hits = models
+    .filter((m) => m && vm.includes(norm(m)))
+    .map((m) => ({ m, at: vm.indexOf(norm(m)), atStart: starts.has(vm.indexOf(norm(m))) }))
+    // word start first, then longest, then earliest ("GLA-CLASS" → GLA, not CLA)
+    .sort((a, b) => Number(b.atStart) - Number(a.atStart) || b.m.length - a.m.length || a.at - b.at);
+  return hits[0]?.m || '';
 }
+
+/** Manufacturing year inside the row's catalogue period (true when either is unknown). */
+const rowCovers = (r: CatalogRow, year?: number | null) => {
+  const from = Number(r.year_from);
+  if (!year || !Number.isFinite(from) || from <= 0) return true;
+  const to = r.year_to === null || r.year_to === undefined || r.year_to === '' ? Infinity : Number(r.year_to);
+  return year >= from && year <= to;
+};
 
 const FUEL_ALIASES: Record<string, string[]> = {
   Electric: ['EV', 'Electric'],
@@ -59,8 +79,11 @@ const words = (s: string) =>
 /** Vahan gives model + trim in one string (e.g. "I20 ASTA-CRDI BSIV"). Pick the catalog variant
  *  (brand_model, e.g. "Elite i20 2018 Asta(O)") sharing the most trim words, preferring rows with the
  *  same fuel and manufacturing year. Returns '' unless one variant clearly wins. */
-export function matchVariant(vahanModel: string, model: string, rows: CatalogRow[], fuel?: string, year?: number | null): string {
-  if (!vahanModel || vahanModel.includes('*') || rows.length === 0) return '';
+export function matchVariant(vahanModel: string, model: string, allRows: CatalogRow[], fuel?: string, year?: number | null): string {
+  if (!vahanModel || vahanModel.includes('*') || allRows.length === 0) return '';
+  // PDF: filter by year range first, then narrow by variant.
+  const inPeriod = allRows.filter((r) => rowCovers(r, year));
+  const rows = inPeriod.length ? inPeriod : allRows;
   const modelWords = new Set(words(model));
   const trim = words(vahanModel).filter((w) => !modelWords.has(w));
   if (trim.length === 0) return '';
@@ -97,17 +120,66 @@ export function matchVariant(vahanModel: string, model: string, rows: CatalogRow
   return ranked[0][0];
 }
 
+/** Compact upper-case letters+digits ("E 220 d Exclusive" → "E220DEXCLUSIVE"). */
+const compact = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/**
+ * Luxury brands register the badge, not the family: Vahan "E 220 D" /
+ * "520D" while the catalogue model is "E-Class" / "5 Series" and the badge
+ * sits in the variant ("E220d Exclusive", "520d Sport Line"). Read the
+ * badge (letters + 2–3 digits + one letter, e.g. E220D, GLA200D, 730L) and
+ * pick the catalogue model whose variants start with it, preferring the
+ * manufacturing year's period and the fuel. Returns {} unless one model wins.
+ */
+export function matchModelByBadge(
+  vahanModel: string,
+  brand: string,
+  rows: CatalogRow[],
+  fuel?: string,
+  year?: number | null,
+): { model?: string; variant?: string } {
+  if (!vahanModel || vahanModel.includes('*') || rows.length === 0) return {};
+  const brandWords = new Set([...words(brand), 'MERCEDES', 'BENZ', 'MOTORS', 'INDIA', 'LTD']);
+  // Keep single letters here: the badge is "E 220 D", not "220".
+  const v = vahanModel
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter((w) => w && !brandWords.has(w) && !NOISE.has(w))
+    .join('');
+  const badge = v.match(/^[A-Z]{0,4}\d{2,3}[A-Z]?/)?.[0];
+  if (!badge || !/\d/.test(badge)) return {};
+  let cands = rows.filter((r) => compact(String(r.brand_model || '')).startsWith(badge));
+  if (!cands.length) return {};
+  const inYear = cands.filter((r) => rowCovers(r, year));
+  if (inYear.length) cands = inYear;
+  if (fuel) {
+    const byFuel = cands.filter((r) => String(r.fuel_type || '').toLowerCase() === fuel.toLowerCase());
+    if (byFuel.length) cands = byFuel;
+  }
+  const models = Array.from(new Set(cands.map((r) => String(r.model || '').trim()).filter(Boolean)));
+  if (models.length !== 1) return {};
+  const variants = Array.from(new Set(cands.map((r) => String(r.brand_model || '').trim())));
+  // One trim with this badge → fill it; several (e.g. C220d Prime / Progressive) → let the user pick.
+  return { model: models[0], variant: variants.length === 1 ? variants[0] : undefined };
+}
+
 export function buildFill(v: VahanVehicle, catalog: CatalogRow[], fuelOptions: string[]): VahanFill {
   const brands = Array.from(new Set(catalog.map((r) => (r.brand_name || '').trim()).filter(Boolean)));
   const make = matchBrand(v.maker, brands);
   const models = make
     ? Array.from(new Set(catalog.filter((r) => r.brand_name === make).map((r) => (r.model || '').trim()).filter(Boolean)))
     : [];
-  const model = make ? matchModel(v.model, models) : '';
+  let model = make ? matchModel(v.model, models) : '';
   const fuelType = matchFuel(v.fuelType, fuelOptions);
-  const variant = make && model
+  let variant = make && model
     ? matchVariant(v.model, model, catalog.filter((r) => r.brand_name === make && r.model === model), fuelType, v.year)
     : '';
+  if (make && !model) {
+    // Badge-style models (Mercedes "E 220 D", BMW "520D") → family via the variants.
+    const byBadge = matchModelByBadge(v.model, make, catalog.filter((r) => r.brand_name === make), fuelType, v.year);
+    model = byBadge.model || '';
+    variant = byBadge.variant || '';
+  }
   return {
     licensePlate: v.registrationNumber || undefined,
     make: make || undefined,
