@@ -79,8 +79,8 @@ async function downloadVahanPdf(v: VahanVehicle, rows: Detail[]) {
 }
 
 /** Full Vahan output (the 19 Annexure-I fields): collapsible, grouped, responsive grid with a PDF download. */
-const VahanDetailsPanel: React.FC<{ vehicle: VahanVehicle }> = ({ vehicle }) => {
-  const [open, setOpen] = useState(false);
+const VahanDetailsPanel: React.FC<{ vehicle: VahanVehicle; defaultOpen?: boolean }> = ({ vehicle, defaultOpen = false }) => {
+  const [open, setOpen] = useState(defaultOpen);
   const [saving, setSaving] = useState(false);
   const rows = useMemo(() => vehicle.details || [], [vehicle.details]);
   const groups = useMemo(() => groupRows(rows), [rows]);

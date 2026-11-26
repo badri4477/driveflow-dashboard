@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import axios from 'axios';
 import { socketService } from '@/services/socket';
 import GlobalSyncRefresh from '@/components/GlobalSyncRefresh';
+import AdminVahanSearch from '@/components/admin/AdminVahanSearch';
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -181,10 +182,12 @@ const AdminDashboard: React.FC = () => {
               <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Main Admin Dashboard</h1>
               <p className="text-muted-foreground mt-1 text-sm md:text-base">Overview of system performance and daily operations</p>
             </div>
-            <div className="flex items-center self-start md:self-auto">
+            <div className="flex flex-col items-start md:items-end gap-3 w-full md:w-auto">
               <span className="text-xs md:text-sm text-muted-foreground bg-muted px-4 py-1.5 rounded-full border border-border shadow-sm">
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
               </span>
+              {/* Admin-only Vahan lookup → pop-up with the 19 Annexure-I fields */}
+              <AdminVahanSearch />
             </div>
           </motion.div>
 
