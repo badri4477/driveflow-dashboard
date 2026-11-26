@@ -331,17 +331,6 @@ const CustomerVehicleDetailPage: React.FC = () => {
                      </div>
                    ))}
                 </dl>
-
-                <div className="pt-4 border-t border-border space-y-3">
-                   <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">VIN</span>
-                      <span className="font-mono font-medium">{vehicle.vin || 'N/A'}</span>
-                   </div>
-                   <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Mileage</span>
-                      <span className="font-medium">{vehicle.mileage ? `${vehicle.mileage} km` : 'N/A'}</span>
-                   </div>
-                </div>
              </div>
           </div>
           

@@ -1205,16 +1205,7 @@ class _VehicleDetailPageState extends State<VehicleDetailPage>
         ),
       );
     }
-    if (v.mileage != null) {
-      list.add(
-        _VehicleSpecItem(Icons.speed_outlined, 'Odometer', '${v.mileage} km'),
-      );
-    }
-    if ((v.vin ?? '').trim().isNotEmpty) {
-      list.add(
-        _VehicleSpecItem(Icons.qr_code_2_outlined, 'VIN', v.vin!.trim()),
-      );
-    }
+    // VIN and odometer are not shown — parity with web VehicleDetailPage.
     if ((v.frontTyres ?? '').trim().isNotEmpty) {
       list.add(
         _VehicleSpecItem(

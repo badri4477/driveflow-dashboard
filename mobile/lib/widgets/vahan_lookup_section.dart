@@ -189,50 +189,7 @@ class _VahanLookupSectionState extends State<VahanLookupSection> {
             ),
           ),
         ],
-        if (r != null) ...[
-          const SizedBox(height: 12),
-          Semantics(
-            liveRegion: true,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: theme.dividerColor),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.check_circle, size: 18, color: Colors.green),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          [
-                            'Found ${(r['registrationNumber'] ?? '').toString().isNotEmpty ? r['registrationNumber'] : 'vehicle'}',
-                            if (r['year'] != null) '${r['year']}',
-                            if ((r['fuelType'] ?? '').toString().isNotEmpty)
-                              '${r['fuelType']}',
-                          ].join(' · '),
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        if (widget.describeFill != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.describeFill!(r),
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+        // No "Found …" summary card: the filled fields below show the result.
         if (widget.showDetails &&
             r != null &&
             r['details'] is List &&

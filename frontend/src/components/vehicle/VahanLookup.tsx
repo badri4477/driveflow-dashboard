@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader2, Search, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, Search, AlertCircle } from 'lucide-react';
 import { vahanService, VahanVehicle } from '@/services/vehicleService';
 import { buildFill, CatalogRow, VahanFill } from '@/lib/vahanMatch';
 import { isValidLicensePlate } from '@/lib/formValidation';
@@ -99,27 +99,6 @@ const VahanLookup: React.FC<Props> = ({ plate, onPlateChange, catalog, fuelOptio
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden />
             <span>{error}</span>
           </p>
-        )}
-        {result && mode === 'auto' && (
-          <div className="flex items-start gap-2 text-sm rounded-xl border border-border bg-muted/40 p-3">
-            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-green-600" aria-hidden />
-            <div className="space-y-0.5">
-              <p className="font-medium text-foreground">
-                Found {result.v.registrationNumber || 'vehicle'}
-                {result.v.year ? ` · ${result.v.year}` : ''}
-                {result.v.fuelType ? ` · ${result.v.fuelType}` : ''}
-              </p>
-              <p className="text-muted-foreground">
-                {result.fill.make && result.fill.model && result.fill.variant
-                  ? 'Details filled in. Please check them below.'
-                  : result.fill.make && result.fill.model
-                    ? 'Brand, model and fuel filled in. Pick the variant below.'
-                    : result.fill.make
-                      ? 'Brand filled in. Choose the model and variant below.'
-                      : 'Some details are hidden by Vahan. Choose brand, model and variant below.'}
-              </p>
-            </div>
-          </div>
         )}
         {showDetails && result && mode === 'auto' && <VahanDetailsPanel vehicle={result.v} />}
       </div>
